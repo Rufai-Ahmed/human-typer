@@ -1,0 +1,101 @@
+name: Build Human Typer
+
+# Builds the distributable apps in the cloud:
+#   - Windows  -> HumanTyper-Windows.zip            (the .exe + its files)
+#   - macOS    -> HumanTyper-macOS-AppleSilicon.zip (M-series Macs)
+#   - macOS    -> HumanTyper-macOS-Intel.zip        (older Intel Macs)
+#
+# Trigger it two ways:
+#   1. Manually: GitHub -> Actions -> "Build Human Typer" -> Run workflow.
+#      Download the result from that run's "Artifacts" section.
+#   2. By tag:   push a version tag (e.g. v1.0.0) and it ALSO publishes a
+#      GitHub Release with the three zips attached (stable public download links).
+
+on:
+  workflow_dispatch:        # the manual "Run workflow" button
+  push:
+    tags: [ 'v*' ]          # e.g. v1.0.0 -> also makes a Release
+
+permissions:
+  contents: write           # lets the release job create/update Releases
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false      # a macOS hiccup must not block the Windows build
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+            zipname: HumanTyper-Windows.zip
+          - os: macos-latest
+            label: macOS (Apple Silicon)
+            zipname: HumanTyper-macOS-AppleSilicon.zip
+          - os: macos-13
+            label: macOS (Intel)
+            zipname: HumanTyper-macOS-Intel.zip
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'   # change to '3.11' if any dep lacks 3.12 wheels
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip wheel
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build the app
+        run: python -m PyInstaller --noconfirm --clean HumanTyper.spec
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path dist/HumanTyper -DestinationPath "${{ matrix.zipname }}" -Force
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        # ditto preserves the .app bundle's symlinks/permissions; plain zip can break it.
+        run: ditto -c -k --sequesterRsrc --keepParent "dist/Human Typer.app" "${{ matrix.zipname }}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}
+          path: ${{ matrix.zipname }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create / update the Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -e
+          tag="${GITHUB_REF_NAME}"
+          files=$(find artifacts -type f)
+          # Create the release if it doesn't exist; otherwise just upload/overwrite assets.
+          gh release create "$tag" --title "Human Typer $tag" --generate-notes $files \
+            || gh release upload "$tag" $files --clobber

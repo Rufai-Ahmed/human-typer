@@ -1,0 +1,12 @@
+# Build artifacts
+build/
+dist/
+__pycache__/
+*.pyc
+
+# macOS cruft
+.DS_Store
+
+# Icon build intermediates (keep icon.icns / icon.ico)
+AppIcon.iconset/
+icon_1024.png

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Human Typer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="glow-bg"></div>
+
+    <!-- Main App -->
+    <div id="app-root" class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-container">
+                <span class="logo-icon">⌨️</span>
+                <div class="logo-text">
+                    <h1>Human Typer</h1>
+                    <p class="subtitle">Types anywhere — like a real person at the keyboard.</p>
+                </div>
+            </div>
+            <div class="connection-status">
+                <span class="status-dot connected"></span>
+                <span class="status-text">Ready</span>
+            </div>
+        </header>
+
+        <!-- How it works -->
+        <ol class="steps">
+            <li class="step"><span class="step-num">1</span><span class="step-text"><strong>Paste your text</strong> into the box below.</span></li>
+            <li class="step"><span class="step-num">2</span><span class="step-text"><strong>Set the speed</strong> and humanize options.</span></li>
+            <li class="step"><span class="step-num">3</span><span class="step-text"><strong>Hit Start</strong>, click your target app — typing begins after the countdown.</span></li>
+        </ol>
+
+        <!-- Main Workspace -->
+        <main class="app-workspace">
+            <!-- Left Column: Settings Panel -->
+            <section class="panel settings-panel">
+                <div class="panel-header">
+                    <h2>Settings</h2>
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">
+                        <label for="speed">Typing Speed</label>
+                        <span id="speed-value" class="control-value">100 ms</span>
+                    </div>
+                    <input type="range" id="speed" name="speed" min="2" max="200" value="100" step="1" class="slider">
+                    <span class="control-desc">Delay between keystrokes. Lower = faster (2 ms ≈ near-instant, 200 ms ≈ relaxed). For top speed, turn Humanize off.</span>
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">
+                        <label for="delay">Countdown</label>
+                        <span id="delay-value" class="control-value">5s</span>
+                    </div>
+                    <input type="range" id="delay" name="delay" min="1" max="10" value="5" step="1" class="slider">
+                    <span class="control-desc">Seconds to switch to your target app and click into the field.</span>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="toggle-group">
+                    <div class="toggle-container">
+                        <span class="toggle-title">Humanize</span>
+                        <span class="toggle-desc">Natural rhythm: variable timing, key-distance flight, pauses after punctuation, and small hesitations.</span>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="humanize" checked>
+                        <span class="slider-round"></span>
+                    </label>
+                </div>
+
+                <div class="control-group" id="typo-group">
+                    <div class="control-label">
+                        <label for="typos">Typo &amp; Correction Rate</label>
+                        <span id="typos-value" class="control-value">0%</span>
+                    </div>
+                    <input type="range" id="typos" name="typos" min="0" max="10" value="0" step="0.5" class="slider">
+                    <span class="control-desc">Occasionally mistype a nearby key, then backspace and fix it.</span>
+                </div>
+
+                <div class="note">
+                    <span class="note-icon">⎋</span>
+                    <span>Press <kbd>Esc</kbd> anytime to stop instantly — even while another app is focused.</span>
+                </div>
+            </section>
+
+            <!-- Right Column: Input -->
+            <div class="right-column">
+                <section class="panel input-panel">
+                    <div class="panel-header">
+                        <h2>Text to Type</h2>
+                        <button id="btn-clipboard" class="btn btn-secondary">
+                            <span>📋</span> Paste Clipboard
+                        </button>
+                    </div>
+
+                    <div class="textarea-container">
+                        <textarea id="text-input" placeholder="Paste or type your text here, then hit Start and click into the window you want it typed into."></textarea>
+                        <div class="textarea-footer">
+                            <span id="char-count">0 characters</span>
+                            <span id="word-count">0 words</span>
+                        </div>
+                    </div>
+
+                    <div class="action-bar">
+                        <button id="btn-start" class="btn btn-primary">
+                            <span>⌨️</span> Start Typing
+                        </button>
+                    </div>
+                </section>
+
+                <section class="panel sandbox-panel">
+                    <div class="panel-header">
+                        <h2>Test Field</h2>
+                        <span class="panel-tag">Try it here</span>
+                    </div>
+                    <div class="sandbox-container">
+                        <input type="text" id="sandbox-input" placeholder="Click here, hit Start, and watch it type — no app-switching needed.">
+                        <p class="sandbox-desc">Use this to preview the feel before typing into a real app.</p>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- Active Typing Overlay -->
+    <div id="typing-overlay" class="overlay hidden">
+        <div class="overlay-card">
+            <div class="overlay-glow"></div>
+            <div class="overlay-content">
+                <div class="countdown-circle">
+                    <svg>
+                        <circle cx="60" cy="60" r="50"></circle>
+                        <circle cx="60" cy="60" r="50" id="progress-circle"></circle>
+                    </svg>
+                    <div id="countdown-timer" class="countdown-number">5</div>
+                </div>
+
+                <h3 id="overlay-title">Get ready</h3>
+                <p id="overlay-instruction" class="overlay-desc">Click into the target field now!</p>
+
+                <div id="overlay-stats" class="overlay-stats hidden">
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-track">
+                            <div id="progress-bar" class="progress-bar-fill"></div>
+                        </div>
+                        <div class="progress-label">
+                            <span id="progress-percent">0%</span>
+                            <span id="progress-counts">0 / 0 chars</span>
+                        </div>
+                    </div>
+
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <span class="stat-label">Speed</span>
+                            <span id="stat-wpm" class="stat-value">-- WPM</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">Elapsed</span>
+                            <span id="stat-time" class="stat-value">0.0s</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">Key</span>
+                            <span id="stat-char" class="stat-value-char">None</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="overlay-actions">
+                    <button id="btn-abort" class="btn btn-danger">
+                        <span>🛑</span> Stop (Esc)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

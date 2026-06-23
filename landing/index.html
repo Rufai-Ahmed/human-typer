@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Human Typer — Type anywhere, like a real person</title>
+    <meta name="description" content="Human Typer auto-types your text into any app with real, human-feeling keystrokes. Native desktop app for macOS and Windows. Adjustable speed, natural rhythm, and an instant Esc stop.">
+    <meta name="theme-color" content="#0b0b12">
+
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Human Typer — Type anywhere, like a real person">
+    <meta property="og:description" content="Auto-type your text into any app with real, human-feeling keystrokes. macOS & Windows.">
+    <meta property="og:image" content="/icon.png">
+    <meta name="twitter:card" content="summary_large_image">
+
+    <link rel="icon" href="/icon.png">
+    <link rel="apple-touch-icon" href="/icon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="ambient" aria-hidden="true"></div>
+
+    <!-- Nav -->
+    <header class="nav">
+        <a class="brand" href="#top">
+            <span class="brand-mark">⌨️</span>
+            <span class="brand-name">Human Typer</span>
+        </a>
+        <nav class="nav-links">
+            <a href="#features">Features</a>
+            <a href="#how">How it works</a>
+            <a href="#faq">FAQ</a>
+            <a href="#download" class="btn btn-ghost nav-cta">Download</a>
+        </nav>
+    </header>
+
+    <main id="top">
+        <!-- Hero -->
+        <section class="hero">
+            <span class="pill">macOS &amp; Windows · native app</span>
+            <h1 class="hero-title">Type anywhere,<br><span class="grad">like a real person.</span></h1>
+            <p class="hero-sub">
+                Human Typer types your text into <strong>any</strong> app with real, human-feeling
+                keystrokes — natural rhythm, lifelike pauses, your speed. Not a paste. Real keys.
+            </p>
+            <div class="hero-cta">
+                <a href="#download" class="btn btn-primary btn-lg">⌨️ Get Human Typer</a>
+                <a href="#how" class="btn btn-ghost btn-lg">See how it works</a>
+            </div>
+
+            <!-- App window mockup with a live typing demo -->
+            <div class="mock">
+                <div class="mock-bar">
+                    <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+                    <span class="mock-title">Human Typer</span>
+                </div>
+                <div class="mock-body">
+                    <div class="mock-line"><span class="mock-label">Text</span></div>
+                    <div class="mock-type"><span id="type-demo"></span><span class="caret">▍</span></div>
+                    <div class="mock-controls">
+                        <span class="chip">Speed · 120 ms</span>
+                        <span class="chip">Humanize · on</span>
+                        <span class="chip danger">Esc to stop</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Features -->
+        <section id="features" class="section">
+            <h2 class="section-title">Built to feel human</h2>
+            <p class="section-sub">Every keystroke is a real OS event — so it works in any app, and reads like a person at the keyboard.</p>
+            <div class="grid">
+                <div class="card">
+                    <div class="card-ico">🎹</div>
+                    <h3>Real keystrokes</h3>
+                    <p>Sends genuine OS key events (not a clipboard paste), so it works in browsers, editors, chat — any text field.</p>
+                </div>
+                <div class="card">
+                    <div class="card-ico">🌊</div>
+                    <h3>Human rhythm</h3>
+                    <p>Variable timing, finger-travel flight time, pauses after punctuation, and the odd hesitation. Toggle off for constant speed.</p>
+                </div>
+                <div class="card">
+                    <div class="card-ico">⚡</div>
+                    <h3>Your speed</h3>
+                    <p>From a relaxed 200 ms down to near-instant. Dial in exactly how fast you want it to type.</p>
+                </div>
+                <div class="card">
+                    <div class="card-ico">⌫</div>
+                    <h3>Lifelike typos</h3>
+                    <p>Optional: it occasionally fat-fingers a nearby key, then backspaces and fixes it — just like you would.</p>
+                </div>
+                <div class="card">
+                    <div class="card-ico">🛑</div>
+                    <h3>Instant Esc stop</h3>
+                    <p>Press <kbd>Esc</kbd> to halt immediately — even when another app is in front.</p>
+                </div>
+                <div class="card">
+                    <div class="card-ico">💻</div>
+                    <h3>Mac &amp; Windows</h3>
+                    <p>A real native desktop window on both platforms. No browser tab, no account, no cloud.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- How it works -->
+        <section id="how" class="section">
+            <h2 class="section-title">Three steps</h2>
+            <div class="steps">
+                <div class="step">
+                    <span class="step-n">1</span>
+                    <h3>Paste your text</h3>
+                    <p>Drop in whatever you want typed, or pull it straight from your clipboard.</p>
+                </div>
+                <div class="step">
+                    <span class="step-n">2</span>
+                    <h3>Set the speed</h3>
+                    <p>Choose a pace and leave Humanize on for the most natural feel.</p>
+                </div>
+                <div class="step">
+                    <span class="step-n">3</span>
+                    <h3>Hit start</h3>
+                    <p>Click into your target app during the countdown — it types for you. Esc stops it anytime.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Download (password-gated) -->
+        <section id="download" class="section download">
+            <div class="dl-card">
+                <h2 class="section-title">Download Human Typer</h2>
+
+                <!-- Gate -->
+                <div id="gate">
+                    <p class="section-sub">Enter your access password to unlock the downloads.</p>
+                    <form id="unlock-form" class="unlock" autocomplete="off">
+                        <input id="pw" type="password" placeholder="Access password" spellcheck="false" autocomplete="off" required>
+                        <button id="unlock-btn" type="submit" class="btn btn-primary">Unlock</button>
+                    </form>
+                    <p id="unlock-error" class="unlock-error hidden">That password didn't work. Check it and try again.</p>
+                    <p class="dl-foot">Don't have a password? <a href="mailto:me@rufaiahmed.com?subject=Human%20Typer%20access">Request access</a>.</p>
+                </div>
+
+                <!-- Revealed after correct password -->
+                <div id="downloads" class="downloads hidden">
+                    <p class="section-sub">You're in. Grab your version:</p>
+                    <div class="dl-buttons">
+                        <a id="dl-mac" class="btn btn-primary btn-lg" href="#" rel="noopener"> Download for macOS</a>
+                        <a id="dl-win" class="btn btn-primary btn-lg" href="#" rel="noopener"> Download for Windows</a>
+                    </div>
+                    <p class="dl-alt">On an older Intel Mac? <a id="dl-mac-intel" href="#" rel="noopener">Download the Intel build</a>.</p>
+
+                    <div class="dl-notes">
+                        <div class="dl-note">
+                            <strong>macOS first launch</strong>
+                            <span>Right-click the app → <em>Open</em>, then allow it under System Settings → Privacy &amp; Security → Accessibility.</span>
+                        </div>
+                        <div class="dl-note">
+                            <strong>Windows first launch</strong>
+                            <span>Click <em>More info → Run anyway</em> past SmartScreen. Needs the free Edge WebView2 runtime (preinstalled on Win 10/11).</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- FAQ -->
+        <section id="faq" class="section">
+            <h2 class="section-title">FAQ</h2>
+            <div class="faq">
+                <details>
+                    <summary>What exactly does it do?</summary>
+                    <p>It types text you give it into whatever app is focused, using real keyboard events with human-like timing. Think of it as a tireless typist that mimics a person at the keyboard.</p>
+                </details>
+                <details>
+                    <summary>Which systems does it run on?</summary>
+                    <p>macOS (Apple Silicon and Intel) and Windows 10/11. It's a native desktop app — no browser, no account.</p>
+                </details>
+                <details>
+                    <summary>Is the typing detectable?</summary>
+                    <p>It sends genuine OS keystrokes with natural, variable timing rather than a paste, so it avoids the obvious tells (constant rhythm, superhuman speed, zero errors). That said, no tool can promise it's "undetectable" — typing cadence is only one signal. Use it where automation is allowed.</p>
+                </details>
+                <details>
+                    <summary>Why does it ask for permissions on first launch?</summary>
+                    <p>Sending keystrokes to other apps is a privileged action. On macOS you enable it under Privacy &amp; Security → Accessibility; on Windows your antivirus may simply prompt once. Nothing leaves your machine.</p>
+                </details>
+                <details>
+                    <summary>I lost my access password.</summary>
+                    <p>Email <a href="mailto:me@rufaiahmed.com?subject=Human%20Typer%20access">me@rufaiahmed.com</a> and I'll sort you out.</p>
+                </details>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="footer-brand">
+            <span class="brand-mark">⌨️</span>
+            <span class="brand-name">Human Typer</span>
+        </div>
+        <p class="footer-note">
+            Made for legitimate keyboard automation — demos, accessibility, repetitive data entry, and UI testing.
+            Please use it only where automation is permitted.
+        </p>
+        <p class="footer-small">
+            Support: <a href="mailto:me@rufaiahmed.com">me@rufaiahmed.com</a> · © <span id="year"></span> Human Typer
+        </p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
