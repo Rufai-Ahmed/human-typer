@@ -714,6 +714,85 @@ input:checked + .slider-round:before {
 
 .hidden { display: none !important; }
 
+/* License activation gate */
+.license-gate {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    background: radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.12), transparent 60%), var(--bg-dark);
+}
+
+.license-card {
+    position: relative;
+    overflow: hidden;
+    width: 100%;
+    max-width: 440px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-glass);
+    border-radius: 24px;
+    padding: 3rem 2.5rem;
+    box-shadow: 0 30px 60px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 1rem;
+}
+
+.logo-icon.big { font-size: 3rem; }
+
+.license-title { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; }
+
+.license-sub {
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    font-weight: 300;
+    margin-top: -0.25rem;
+}
+
+.license-input {
+    width: 100%;
+    text-align: center;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--border-glass);
+    border-radius: 12px;
+    padding: 0.9rem 1rem;
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.05rem;
+    letter-spacing: 0.08em;
+    outline: none;
+    transition: border-color 0.3s, box-shadow 0.3s;
+    text-transform: uppercase;
+}
+
+.license-input:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 15px rgba(139, 92, 246, 0.15);
+}
+
+.license-input::placeholder { letter-spacing: 0.05em; color: var(--text-muted); }
+
+.license-btn { width: 100%; padding: 0.9rem; }
+
+.license-error {
+    color: var(--accent-danger);
+    font-size: 0.85rem;
+    font-weight: 500;
+    margin-top: -0.25rem;
+}
+
+.license-foot {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-weight: 300;
+    margin-top: 0.25rem;
+}
+
 /* How-it-works steps */
 .steps {
     list-style: none;

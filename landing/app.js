@@ -23,62 +23,62 @@ document.getElementById('year').textContent = new Date().getFullYear();
             if (ci === 0) { deleting = false; pi = (pi + 1) % phrases.length; }
         }
         el.textContent = full.slice(0, ci);
-        // Human-ish jitter so the demo itself looks hand-typed.
         const base = deleting ? 28 : 70;
         setTimeout(tick, base + Math.random() * 80);
     }
     tick();
 })();
 
-// --- Password gate ---
+// --- Paystack one-time checkout (lifetime license) ---
 (() => {
-    const form = document.getElementById('unlock-form');
-    const pw = document.getElementById('pw');
-    const btn = document.getElementById('unlock-btn');
-    const errEl = document.getElementById('unlock-error');
-    const gate = document.getElementById('gate');
-    const downloads = document.getElementById('downloads');
-    const dlMac = document.getElementById('dl-mac');
-    const dlWin = document.getElementById('dl-win');
-    const dlMacIntel = document.getElementById('dl-mac-intel');
-    const dlMacIntelWrap = document.getElementById('dl-mac-intel-wrap');
+    const PAYSTACK_PUBLIC_KEY = 'pk_live_e4a3914a47bf7166a817304186e8168b54622deb';
+    const PRICE_KOBO = 1000000;   // ₦10,000 (Paystack amounts are in kobo)
 
-    if (!form) return;
+    const btnBuy = document.getElementById('btn-buy');
+    const emailInput = document.getElementById('buyer-email');
+    const msg = document.getElementById('buy-msg');
+    if (!btnBuy) return;
 
-    form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        errEl.classList.add('hidden');
-        btn.disabled = true;
-        const original = btn.textContent;
-        btn.textContent = 'Checking…';
+    function showMsg(text, isError) {
+        msg.textContent = text;
+        msg.classList.remove('hidden');
+        msg.classList.toggle('error', !!isError);
+    }
 
-        try {
-            const res = await fetch('/api/unlock', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ password: pw.value }),
-            });
-            const data = await res.json().catch(() => ({}));
+    const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 
-            if (res.ok && data.ok && data.downloads) {
-                dlMac.setAttribute('href', data.downloads.macArm);
-                dlWin.setAttribute('href', data.downloads.windows);
-                if (data.downloads.macIntel && dlMacIntel && dlMacIntelWrap) {
-                    dlMacIntel.setAttribute('href', data.downloads.macIntel);
-                    dlMacIntelWrap.hidden = false;
-                }
-                gate.classList.add('hidden');
-                downloads.classList.remove('hidden');
-            } else {
-                errEl.textContent = data.error || "That password didn't work. Check it and try again.";
-                errEl.classList.remove('hidden');
-            }
-        } catch (err) {
-            errEl.textContent = 'Could not reach the server. Please try again.';
-            errEl.classList.remove('hidden');
-        } finally {
-            btn.disabled = false;
-            btn.textContent = original;
+    btnBuy.addEventListener('click', () => {
+        const email = (emailInput.value || '').trim();
+        if (!validEmail(email)) {
+            showMsg('Please enter a valid email — that is where your license key is sent.', true);
+            emailInput.focus();
+            return;
         }
+        if (typeof PaystackPop === 'undefined') {
+            showMsg('The payment library could not load. Check your connection, refresh, and try again.', true);
+            return;
+        }
+
+        const handler = PaystackPop.setup({
+            key: PAYSTACK_PUBLIC_KEY,
+            email: email,
+            amount: PRICE_KOBO,
+            currency: 'NGN',
+            metadata: {
+                custom_fields: [{
+                    display_name: 'Product',
+                    variable_name: 'product',
+                    value: 'Human Typer — Lifetime license',
+                }],
+            },
+            callback: function (response) {
+                showMsg('Payment successful (ref: ' + response.reference + '). Your license key is on its way to '
+                    + email + ' — check your inbox and spam in a few minutes, then download below and paste it into the app.', false);
+            },
+            onClose: function () {
+                showMsg('Checkout was closed before payment. You can start again whenever you are ready.', true);
+            },
+        });
+        handler.openIframe();
     });
 })();

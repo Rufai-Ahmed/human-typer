@@ -12,8 +12,22 @@
 <body>
     <div class="glow-bg"></div>
 
+    <!-- License Activation Gate -->
+    <div id="license-gate" class="license-gate hidden">
+        <div class="license-card">
+            <div class="overlay-glow"></div>
+            <span class="logo-icon big">⌨️</span>
+            <h1 class="license-title">Activate Human Typer</h1>
+            <p class="license-sub">Enter the license key from your purchase email to unlock the app. One-time activation — yours forever.</p>
+            <input type="text" id="license-key-input" class="license-input" placeholder="HT-XXXXX-XXXXX-XXXXX" autocomplete="off" spellcheck="false">
+            <button id="btn-activate" class="btn btn-primary license-btn">Activate</button>
+            <p id="license-error" class="license-error hidden"></p>
+            <p class="license-foot">No key yet? Get one at <strong>humantypist.rufaiahmed.com</strong>. Lost it? Contact support.</p>
+        </div>
+    </div>
+
     <!-- Main App -->
-    <div id="app-root" class="app-container">
+    <div id="app-root" class="app-container hidden">
         <!-- Header -->
         <header class="app-header">
             <div class="logo-container">
@@ -25,7 +39,7 @@
             </div>
             <div class="connection-status">
                 <span class="status-dot connected"></span>
-                <span class="status-text">Ready</span>
+                <span class="status-text">Licensed</span>
             </div>
         </header>
 

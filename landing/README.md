@@ -1,58 +1,48 @@
 # Human Typer — landing page
 
-Static marketing + download page with a **server-side password gate**, built to
-deploy on Vercel at `humantypist.rufaiahmed.com`.
+Static marketing + sales page for `humantypist.rufaiahmed.com`. Sells a
+**one-time ₦10,000 lifetime license** via Paystack; the app itself is gated by a
+license key (see the repo root). Pure static — no server, no env vars needed.
 
 ```
 landing/
-  index.html        marketing + gated download UI
-  styles.css        styling (on-brand, GPU-light)
-  app.js            typing demo + unlock flow
-  api/unlock.js     serverless password check (Vercel function)
-  icon.png          favicon / social image
+  index.html   marketing, pricing (Paystack), free download links
+  styles.css   styling (on-brand, GPU-light)
+  app.js       typing demo + Paystack checkout
+  icon.png     favicon / social image
 ```
 
-## How the gate works
+## How buying works
 
-1. A visitor enters the access password and the browser POSTs it to `/api/unlock`.
-2. The function compares it to the `DOWNLOAD_PASSWORD` env var **on the server**
-   (timing-safe). The password is never in the page source.
-3. On success the function returns the download URLs and the buttons unlock.
+1. Buyer enters their email and clicks **Buy lifetime access** → Paystack popup
+   (uses your **public** key `pk_live_…`, charges ₦10,000 / 1,000,000 kobo).
+2. On success the page tells them their key is coming by email.
+3. You confirm the payment in your **Paystack dashboard**, then email them one of
+   the keys from `LICENSE_KEYS.txt` (your Google Doc). This is manual fulfilment.
+4. They download the free app and paste the key to activate it forever.
 
-> **Honest limitation:** the release `.zip` files themselves are public URLs, so
-> the password controls who sees the links *on your site* — it deters casual
-> sharing, but a determined person who already has a link can still use it.
-> For true protection (private files + short-lived signed links), move the
-> builds to private storage (Cloudflare R2 / S3 / Vercel Blob) and have the
-> function mint a signed URL after the password check. Ask and I'll wire that up.
+> **Keys:** `python gen_licenses.py 50` (repo root) makes the keys. Plaintext
+> lives in `LICENSE_KEYS.txt` (gitignored — your Google Doc); only the SHA-256
+> hashes ship inside the app (`licenses.py`). To add more later without breaking
+> issued keys: `python gen_licenses.py --add 50` then rebuild + release.
+
+## Security notes
+
+- Only the Paystack **public** key (`pk_live_…`) is in the page — that's safe and
+  intended. NEVER put the **secret** key (`sk_live_…`) in the repo or the page.
+- Download links point at the public GitHub release, so anyone with a link can
+  download the app — but it's useless without a paid license key, so that's fine.
 
 ## Deploy to Vercel
 
-1. Push this repo to GitHub (see the repo root).
-2. In Vercel: **Add New → Project →** import the repo.
-   - **Root Directory:** `landing`
-   - **Framework Preset:** Other (it's static + a function — zero config).
-3. **Settings → Environment Variables**, add:
-   | Name | Value |
-   |---|---|
-   | `DOWNLOAD_PASSWORD` | the long access password you give buyers |
-   | `DOWNLOAD_BASE` | `https://github.com/<owner>/<repo>/releases/latest/download` |
-4. Deploy.
+1. Import the repo. **Root Directory = `landing`**, Framework = **Other** (static).
+2. No environment variables required.
+3. Deploy, then **Settings → Domains → Add** `humantypist.rufaiahmed.com` and add
+   the CNAME it shows to your `rufaiahmed.com` DNS.
 
-## Custom subdomain
+## Auto-deliver keys later (optional upgrade)
 
-1. Vercel project → **Settings → Domains → Add** `humantypist.rufaiahmed.com`.
-2. Vercel shows a DNS record (a `CNAME` to `cname.vercel-dns.com`). Add it to
-   the DNS for `rufaiahmed.com`. It verifies in a few minutes.
-
-## Download links
-
-The buttons resolve to the assets published by the root repo's
-`.github/workflows/build.yml` when you push a version tag (e.g. `v1.0.0`):
-
-- `HumanTyper-Windows.zip`
-- `HumanTyper-macOS-AppleSilicon.zip`
-- `HumanTyper-macOS-Intel.zip`
-
-`releases/latest/download/...` always points at your newest release, so you
-don't have to touch the site when you ship an update — just push a new tag.
+Manual fulfilment is fine to start. To automate: add a Vercel serverless function
+that verifies the Paystack transaction with your **secret** key (server-side env
+var) and returns/east-emails a key from a store (Vercel KV / Upstash). Ask and I
+can wire it up.

@@ -4,12 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Human Typer — Type anywhere, like a real person</title>
-    <meta name="description" content="Human Typer auto-types your text into any app with real, human-feeling keystrokes. Native desktop app for macOS and Windows. Adjustable speed, natural rhythm, and an instant Esc stop.">
+    <meta name="description" content="Human Typer auto-types your text into any app with real, human-feeling keystrokes. Native macOS & Windows app. One-time payment of ₦10,000 — yours forever, no subscription.">
     <meta name="theme-color" content="#0b0b12">
 
     <meta property="og:type" content="website">
     <meta property="og:title" content="Human Typer — Type anywhere, like a real person">
-    <meta property="og:description" content="Auto-type your text into any app with real, human-feeling keystrokes. macOS & Windows.">
+    <meta property="og:description" content="Auto-type into any app with real, human-feeling keystrokes. One-time ₦10,000, yours forever. macOS & Windows.">
     <meta property="og:image" content="/icon.png">
     <meta name="twitter:card" content="summary_large_image">
 
@@ -32,22 +32,23 @@
         <nav class="nav-links">
             <a href="#features">Features</a>
             <a href="#how">How it works</a>
+            <a href="#pricing">Pricing</a>
             <a href="#faq">FAQ</a>
-            <a href="#download" class="btn btn-ghost nav-cta">Download</a>
+            <a href="#pricing" class="btn btn-ghost nav-cta">Get it</a>
         </nav>
     </header>
 
     <main id="top">
         <!-- Hero -->
         <section class="hero">
-            <span class="pill">macOS &amp; Windows · native app</span>
+            <span class="pill">One-time ₦10,000 · yours forever · no subscription</span>
             <h1 class="hero-title">Type anywhere,<br><span class="grad">like a real person.</span></h1>
             <p class="hero-sub">
                 Human Typer types your text into <strong>any</strong> app with real, human-feeling
                 keystrokes — natural rhythm, lifelike pauses, your speed. Not a paste. Real keys.
             </p>
             <div class="hero-cta">
-                <a href="#download" class="btn btn-primary btn-lg">⌨️ Get Human Typer</a>
+                <a href="#pricing" class="btn btn-primary btn-lg">Get it for ₦10,000 once</a>
                 <a href="#how" class="btn btn-ghost btn-lg">See how it works</a>
             </div>
 
@@ -109,60 +110,72 @@
 
         <!-- How it works -->
         <section id="how" class="section">
-            <h2 class="section-title">Three steps</h2>
+            <h2 class="section-title">Four steps</h2>
             <div class="steps">
                 <div class="step">
                     <span class="step-n">1</span>
-                    <h3>Paste your text</h3>
-                    <p>Drop in whatever you want typed, or pull it straight from your clipboard.</p>
+                    <h3>Buy your key</h3>
+                    <p>One payment of ₦10,000. Your license key is emailed to you.</p>
                 </div>
                 <div class="step">
                     <span class="step-n">2</span>
-                    <h3>Set the speed</h3>
-                    <p>Choose a pace and leave Humanize on for the most natural feel.</p>
+                    <h3>Download &amp; activate</h3>
+                    <p>Grab the free app, open it, and paste your key once. Done forever.</p>
                 </div>
                 <div class="step">
                     <span class="step-n">3</span>
+                    <h3>Paste your text</h3>
+                    <p>Drop in what you want typed, set the speed, leave Humanize on.</p>
+                </div>
+                <div class="step">
+                    <span class="step-n">4</span>
                     <h3>Hit start</h3>
                     <p>Click into your target app during the countdown — it types for you. Esc stops it anytime.</p>
                 </div>
             </div>
         </section>
 
-        <!-- Download (password-gated) -->
+        <!-- Pricing -->
+        <section id="pricing" class="section pricing">
+            <h2 class="section-title">One price. Forever.</h2>
+            <p class="section-sub">Others charge you every month. Human Typer is a single payment — pay once, own it for life.</p>
+
+            <div class="price-card">
+                <div class="price-badge">Lifetime license</div>
+                <div class="price-amount">₦10,000<span class="price-once"> once</span></div>
+                <p class="price-compare">goghostwriter bills <strong>every month</strong>. This is <strong>one payment, forever</strong> — and it pays for itself in the first month.</p>
+                <ul class="price-list">
+                    <li>Lifetime license key (no renewals)</li>
+                    <li>Works on macOS &amp; Windows</li>
+                    <li>Every feature, plus future updates</li>
+                    <li>No monthly fees, ever</li>
+                </ul>
+                <input id="buyer-email" type="email" class="price-email" placeholder="your@email.com — where we send your key" autocomplete="email" inputmode="email">
+                <button id="btn-buy" class="btn btn-primary btn-lg price-buy">Buy lifetime access — ₦10,000</button>
+                <p id="buy-msg" class="buy-msg hidden"></p>
+                <p class="price-foot">Secure checkout by Paystack. Your license key is emailed after payment, then you download below.</p>
+            </div>
+        </section>
+
+        <!-- Download -->
         <section id="download" class="section download">
             <div class="dl-card">
-                <h2 class="section-title">Download Human Typer</h2>
-
-                <!-- Gate -->
-                <div id="gate">
-                    <p class="section-sub">Enter your access password to unlock the downloads.</p>
-                    <form id="unlock-form" class="unlock" autocomplete="off">
-                        <input id="pw" type="password" placeholder="Access password" spellcheck="false" autocomplete="off" required>
-                        <button id="unlock-btn" type="submit" class="btn btn-primary">Unlock</button>
-                    </form>
-                    <p id="unlock-error" class="unlock-error hidden">That password didn't work. Check it and try again.</p>
-                    <p class="dl-foot">Don't have a password? <a href="mailto:me@rufaiahmed.com?subject=Human%20Typer%20access">Request access</a>.</p>
+                <h2 class="section-title">Download</h2>
+                <p class="section-sub">Free to download — activate it with the license key from your purchase.</p>
+                <div class="dl-buttons">
+                    <a class="btn btn-primary btn-lg" href="https://github.com/rufus-stack/human-typer/releases/latest/download/HumanTyper-Windows.zip" rel="noopener">Download for Windows</a>
+                    <a class="btn btn-primary btn-lg" href="https://github.com/rufus-stack/human-typer/releases/latest/download/HumanTyper-macOS-AppleSilicon.zip" rel="noopener">Download for macOS</a>
                 </div>
+                <p class="dl-alt">On an older Intel Mac? <a href="https://github.com/rufus-stack/human-typer/releases/latest/download/HumanTyper-macOS-Intel.zip" rel="noopener">Intel build</a>.</p>
 
-                <!-- Revealed after correct password -->
-                <div id="downloads" class="downloads hidden">
-                    <p class="section-sub">You're in. Grab your version:</p>
-                    <div class="dl-buttons">
-                        <a id="dl-mac" class="btn btn-primary btn-lg" href="#" rel="noopener"> Download for macOS</a>
-                        <a id="dl-win" class="btn btn-primary btn-lg" href="#" rel="noopener"> Download for Windows</a>
+                <div class="dl-notes">
+                    <div class="dl-note">
+                        <strong>macOS first launch</strong>
+                        <span>Right-click the app → <em>Open</em>, then allow it under System Settings → Privacy &amp; Security → Accessibility.</span>
                     </div>
-                    <p class="dl-alt" id="dl-mac-intel-wrap" hidden>On an older Intel Mac? <a id="dl-mac-intel" href="#" rel="noopener">Download the Intel build</a>.</p>
-
-                    <div class="dl-notes">
-                        <div class="dl-note">
-                            <strong>macOS first launch</strong>
-                            <span>Right-click the app → <em>Open</em>, then allow it under System Settings → Privacy &amp; Security → Accessibility.</span>
-                        </div>
-                        <div class="dl-note">
-                            <strong>Windows first launch</strong>
-                            <span>Click <em>More info → Run anyway</em> past SmartScreen. Needs the free Edge WebView2 runtime (preinstalled on Win 10/11).</span>
-                        </div>
+                    <div class="dl-note">
+                        <strong>Windows first launch</strong>
+                        <span>Click <em>More info → Run anyway</em> past SmartScreen. Needs the free Edge WebView2 runtime (preinstalled on Win 10/11).</span>
                     </div>
                 </div>
             </div>
@@ -172,6 +185,14 @@
         <section id="faq" class="section">
             <h2 class="section-title">FAQ</h2>
             <div class="faq">
+                <details>
+                    <summary>How much is it, and is it really one-time?</summary>
+                    <p>₦10,000, paid once. No subscription, no renewals — it's yours for life, on both macOS and Windows. (goghostwriter and similar tools charge every month.)</p>
+                </details>
+                <details>
+                    <summary>How do I get my license key?</summary>
+                    <p>After you pay with Paystack, your key is emailed to the address you enter at checkout. Download the app, open it, and paste the key once to activate it forever on that machine.</p>
+                </details>
                 <details>
                     <summary>What exactly does it do?</summary>
                     <p>It types text you give it into whatever app is focused, using real keyboard events with human-like timing. Think of it as a tireless typist that mimics a person at the keyboard.</p>
@@ -189,8 +210,8 @@
                     <p>Sending keystrokes to other apps is a privileged action. On macOS you enable it under Privacy &amp; Security → Accessibility; on Windows your antivirus may simply prompt once. Nothing leaves your machine.</p>
                 </details>
                 <details>
-                    <summary>I lost my access password.</summary>
-                    <p>Email <a href="mailto:me@rufaiahmed.com?subject=Human%20Typer%20access">me@rufaiahmed.com</a> and I'll sort you out.</p>
+                    <summary>I lost my license key.</summary>
+                    <p>Email <a href="mailto:me@rufaiahmed.com?subject=Human%20Typer%20license%20key">me@rufaiahmed.com</a> with your payment details and I'll resend it.</p>
                 </details>
             </div>
         </section>
@@ -210,6 +231,7 @@
         </p>
     </footer>
 
+    <script src="https://js.paystack.co/v1/inline.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

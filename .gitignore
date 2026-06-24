@@ -10,3 +10,6 @@ __pycache__/
 # Icon build intermediates (keep icon.icns / icon.ico)
 AppIcon.iconset/
 icon_1024.png
+
+# NEVER commit or ship the plaintext keys — only licenses.py (hashes) ships.
+LICENSE_KEYS.txt

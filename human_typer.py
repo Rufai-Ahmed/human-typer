@@ -22,6 +22,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -229,6 +230,67 @@ def start_global_abort_listener() -> bool:
         return True
 
     return False
+
+
+# --- Offline license gate ---------------------------------------------------
+# Only SHA-256 hashes of the valid keys are embedded; the plaintext keys live
+# solely in LICENSE_KEYS.txt and are handed out to buyers (one-time purchase).
+try:
+    from licenses import LICENSE_HASHES
+except Exception:
+    LICENSE_HASHES = set()
+
+
+def _config_dir() -> str:
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA", os.path.expanduser("~"))
+        path = os.path.join(base, "HumanTyper")
+    elif sys.platform == "darwin":
+        path = os.path.expanduser("~/Library/Application Support/HumanTyper")
+    else:
+        path = os.path.expanduser("~/.config/humantyper")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _activation_file() -> str:
+    return os.path.join(_config_dir(), "activation.json")
+
+
+def _normalize_key(key: str) -> str:
+    # Canonical form: alphanumerics only, uppercased — forgiving of dashes,
+    # spaces, and case so a pasted key matches however it was formatted.
+    return "".join(ch for ch in key if ch.isalnum()).upper()
+
+
+def _hash_key(key: str) -> str:
+    return hashlib.sha256(_normalize_key(key).encode("utf-8")).hexdigest()
+
+
+def is_activated() -> bool:
+    """True if a previously activated key is still recorded and still valid."""
+    if not LICENSE_HASHES:
+        # No embedded key list (e.g. dev build) -> don't lock the user out.
+        return True
+    try:
+        with open(_activation_file(), "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data.get("key_hash") in LICENSE_HASHES
+    except Exception:
+        return False
+
+
+def activate(key: str) -> bool:
+    """Validate a key and persist activation. Returns True on success."""
+    digest = _hash_key(key)
+    if digest not in LICENSE_HASHES:
+        return False
+    try:
+        with open(_activation_file(), "w", encoding="utf-8") as fh:
+            json.dump({"key_hash": digest}, fh)
+    except Exception:
+        pass
+    return True
 
 
 def _gauss_positive(mean: float, rel_std: float) -> float:
@@ -489,6 +551,8 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
             self.serve_static("style.css", "text/css")
         elif parsed.path == "/app.js":
             self.serve_static("app.js", "application/javascript")
+        elif parsed.path == "/api/license":
+            self.send_json({"activated": is_activated()})
         elif parsed.path == "/api/status":
             self.send_json({
                 "state": typing_status.state,
@@ -510,7 +574,22 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
-        if parsed.path == "/api/type":
+        if parsed.path == "/api/license/activate":
+            body = self._read_body()
+            try:
+                params = json.loads(body)
+                key = params.get("key", "")
+                if activate(key):
+                    self.send_json({"activated": True})
+                else:
+                    self.send_json({"activated": False, "error": "Invalid license key."}, 400)
+            except Exception as e:
+                self.send_json({"error": str(e)}, 400)
+
+        elif parsed.path == "/api/type":
+            if not is_activated():
+                self.send_json({"error": "License required."}, 403)
+                return
             body = self._read_body()
             try:
                 params = json.loads(body)

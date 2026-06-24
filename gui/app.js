@@ -1,4 +1,11 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // --- License gate elements ---
+    const licenseGate = document.getElementById('license-gate');
+    const appRoot = document.getElementById('app-root');
+    const licenseInput = document.getElementById('license-key-input');
+    const btnActivate = document.getElementById('btn-activate');
+    const licenseError = document.getElementById('license-error');
+
     // --- Settings elements ---
     const speedSlider = document.getElementById('speed');
     const speedValue = document.getElementById('speed-value');
@@ -33,6 +40,62 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let pollInterval = null;
     let originalCountdown = 5.0;
+
+    // ============================ License Gate ============================
+    async function checkLicense() {
+        try {
+            const res = await fetch('/api/license');
+            const data = await res.json();
+            if (data.activated) { showApp(); } else { showGate(); }
+        } catch (err) {
+            showGate();
+        }
+    }
+
+    function showApp() {
+        licenseGate.classList.add('hidden');
+        appRoot.classList.remove('hidden');
+    }
+
+    function showGate() {
+        appRoot.classList.add('hidden');
+        licenseGate.classList.remove('hidden');
+        licenseInput.focus();
+    }
+
+    async function activate() {
+        const key = licenseInput.value.trim();
+        if (!key) { showLicenseError('Please enter your license key.'); return; }
+        btnActivate.disabled = true;
+        btnActivate.textContent = 'Activating…';
+        try {
+            const res = await fetch('/api/license/activate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key })
+            });
+            const data = await res.json();
+            if (res.ok && data.activated) {
+                licenseError.classList.add('hidden');
+                showApp();
+            } else {
+                showLicenseError(data.error || 'Invalid license key.');
+            }
+        } catch (err) {
+            showLicenseError('Could not reach the activation engine.');
+        } finally {
+            btnActivate.disabled = false;
+            btnActivate.textContent = 'Activate';
+        }
+    }
+
+    function showLicenseError(msg) {
+        licenseError.textContent = msg;
+        licenseError.classList.remove('hidden');
+    }
+
+    btnActivate.addEventListener('click', activate);
+    licenseInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') activate(); });
 
     // ============================ Settings ============================
     speedSlider.addEventListener('input', (e) => {
@@ -212,4 +275,5 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ============================ Init ============================
     updateCounters();
+    checkLicense();
 });
