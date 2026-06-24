@@ -240,7 +240,7 @@ def start_global_abort_listener() -> bool:
 # local record (tied to this machine's fingerprint) gates the app, re-checked
 # online at launch (fail-open when offline, so offline use keeps working).
 ACTIVATE_URL = os.environ.get(
-    "HUMANTYPER_ACTIVATE_URL", "https://humantypist.rufaiahmed.com/api/activate"
+    "HUMANTYPER_ACTIVATE_URL", "https://humantyper.rufaiahmed.com/api/activate"
 )
 
 

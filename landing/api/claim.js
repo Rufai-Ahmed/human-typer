@@ -71,7 +71,7 @@ module.exports = async (req, res) => {
     if (!reference) { res.status(400).json({ ok: false, error: "Missing payment reference" }); return; }
 
     const priceKobo = parseInt(process.env.PRICE_KOBO || "1000000", 10);
-    const downloadUrl = process.env.DOWNLOAD_URL || "https://humantypist.rufaiahmed.com#download";
+    const downloadUrl = process.env.DOWNLOAD_URL || "https://humantyper.rufaiahmed.com#download";
 
     try {
         // Source of truth: verify the transaction directly with Paystack.

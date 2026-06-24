@@ -1,6 +1,6 @@
 # Human Typer — landing + license backend
 
-Marketing/sales page for `humantypist.rufaiahmed.com` plus the serverless backend
+Marketing/sales page for `humantyper.rufaiahmed.com` plus the serverless backend
 that **auto-delivers keys after a Paystack payment** and **activates them online**
 (one device per key, revocable). Backed by Supabase.
 
@@ -44,10 +44,10 @@ Add environment variables:
 | `MAIL_FROM` *(optional)* | `Human Typer <keys@updates.rufaiahmed.com>` |
 | `ADMIN_EMAIL` *(optional)* | `me@rufaiahmed.com` (alerted if keys run out) |
 
-Then **Settings → Domains → Add** `humantypist.rufaiahmed.com`.
+Then **Settings → Domains → Add** `humantyper.rufaiahmed.com`.
 
 **5. Paystack webhook** — Dashboard → Settings → Webhooks → URL =
-`https://humantypist.rufaiahmed.com/api/claim`. (The page already uses your
+`https://humantyper.rufaiahmed.com/api/claim`. (The page already uses your
 **public** key for checkout; the secret key stays server-side.)
 
 ## How it works
