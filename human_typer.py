@@ -34,6 +34,16 @@ import webbrowser
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+# In a PyInstaller windowed (no-console) build — notably on Windows — sys.stdin,
+# sys.stdout and sys.stderr are all None. Re-point any that are None at os.devnull
+# so .isatty()/.read()/print() never crash ("'NoneType' has no attribute 'isatty'").
+for _std_name, _std_mode in (("stdin", "r"), ("stdout", "w"), ("stderr", "w")):
+    if getattr(sys, _std_name, None) is None:
+        try:
+            setattr(sys, _std_name, open(os.devnull, _std_mode))
+        except OSError:
+            pass
+
 # pynput drives keystrokes on Windows/Linux and the global Esc listener everywhere.
 HAS_PYNPUT = False
 try:
@@ -436,9 +446,11 @@ def read_clipboard() -> str:
             capture_output=True, text=True,
         ).stdout
     if sys.platform.startswith("win"):
+        # CREATE_NO_WINDOW stops a console window flashing up in the no-console app.
         return subprocess.run(
-            ["powershell", "-command", "Get-Clipboard"],
+            ["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
             capture_output=True, text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         ).stdout
     sys.exit("Clipboard read not supported on this platform.")
 
