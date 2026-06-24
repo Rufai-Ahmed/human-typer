@@ -714,6 +714,31 @@ input:checked + .slider-round:before {
 
 .hidden { display: none !important; }
 
+/* Update-available banner */
+.update-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    background: var(--gradient-primary);
+    color: #fff;
+    padding: 0.7rem 1rem;
+    border-radius: 12px;
+    font-weight: 500;
+}
+.btn-update {
+    background: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    color: #fff;
+    padding: 0.4rem 0.95rem;
+    border-radius: 8px;
+    cursor: pointer;
+    font: inherit;
+    font-weight: 600;
+}
+.btn-update:hover { background: rgba(255, 255, 255, 0.32); }
+
 /* License activation gate */
 .license-gate {
     position: fixed;

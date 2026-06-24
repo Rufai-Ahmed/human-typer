@@ -283,7 +283,28 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => { typingOverlay.classList.add('hidden'); }, 1600);
     }
 
+    // ============================ Update check ============================
+    async function checkForUpdate() {
+        try {
+            const res = await fetch('/api/update');
+            const d = await res.json();
+            if (d && d.update_available && d.url) {
+                document.getElementById('update-text').textContent = `Version ${d.latest} is available.`;
+                const banner = document.getElementById('update-banner');
+                banner.classList.remove('hidden');
+                document.getElementById('update-btn').onclick = () => {
+                    fetch('/api/open-download', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ url: d.url }),
+                    });
+                };
+            }
+        } catch (err) { /* offline / no update info — ignore */ }
+    }
+
     // ============================ Init ============================
     updateCounters();
     checkLicense();
+    checkForUpdate();
 });

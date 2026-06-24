@@ -243,6 +243,13 @@ ACTIVATE_URL = os.environ.get(
     "HUMANTYPER_ACTIVATE_URL", "https://humantyper.rufaiahmed.com/api/activate"
 )
 
+# Bump this on every release; the app compares it to the server's latest version
+# and shows a "Download update" banner when this build is behind.
+APP_VERSION = "1.3.0"
+VERSION_URL = os.environ.get(
+    "HUMANTYPER_VERSION_URL", ACTIVATE_URL.rsplit("/api/", 1)[0] + "/api/version"
+)
+
 
 def _config_dir() -> str:
     if sys.platform == "win32":
@@ -378,6 +385,39 @@ def activate(key: str) -> dict:
             pass
         return {"ok": True}
     return {"ok": False, "reason": res.get("reason", "invalid")}
+
+
+def _version_tuple(v: str):
+    parts = []
+    for p in (v or "").strip().lstrip("vV").split("."):
+        digits = "".join(ch for ch in p if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts) or (0,)
+
+
+def check_update() -> dict:
+    """Ask the server for the latest version; flag if this build is behind.
+
+    Returns {update_available, latest, url}. Fail-open (no banner) on any error.
+    """
+    try:
+        req = urllib.request.Request(VERSION_URL, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        latest = data.get("version") or ""
+        downloads = data.get("downloads") or {}
+        if latest and _version_tuple(latest) > _version_tuple(APP_VERSION):
+            if sys.platform.startswith("win"):
+                url = downloads.get("windows")
+            elif sys.platform == "darwin":
+                import platform as _pf
+                url = downloads.get("macArm") if _pf.machine() == "arm64" else downloads.get("macIntel")
+            else:
+                url = downloads.get("windows")
+            return {"update_available": True, "latest": latest, "url": url or ""}
+    except Exception:
+        pass
+    return {"update_available": False, "latest": APP_VERSION, "url": ""}
 
 
 def _gauss_positive(mean: float, rel_std: float) -> float:
@@ -657,6 +697,8 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
                 self.send_json({"text": clip_text})
             except Exception as e:
                 self.send_json({"error": str(e)}, 500)
+        elif parsed.path == "/api/update":
+            self.send_json(check_update())
         else:
             self.send_error(404, "File Not Found")
 
@@ -715,6 +757,18 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/abort":
             typing_status.cancel_event.set()
             self.send_json({"status": "abort_requested"})
+
+        elif parsed.path == "/api/open-download":
+            body = self._read_body()
+            try:
+                url = json.loads(body).get("url", "")
+                if url.startswith("https://github.com/"):
+                    webbrowser.open(url)
+                    self.send_json({"ok": True})
+                else:
+                    self.send_json({"ok": False, "error": "bad url"}, 400)
+            except Exception as e:
+                self.send_json({"ok": False, "error": str(e)}, 400)
         else:
             self.send_error(404)
 
