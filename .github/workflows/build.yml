@@ -62,6 +62,18 @@ jobs:
       - name: Build the app
         run: python -m PyInstaller --noconfirm --clean HumanTyper.spec
 
+      - name: Sign & notarize (macOS)
+        if: runner.os == 'macOS'
+        # No-op (unsigned) unless the Apple secrets are set, so this never breaks builds.
+        env:
+          APPLE_DEV_ID_CERT_P12: ${{ secrets.APPLE_DEV_ID_CERT_P12 }}
+          APPLE_DEV_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEV_ID_CERT_PASSWORD }}
+          APPLE_DEV_ID_IDENTITY: ${{ secrets.APPLE_DEV_ID_IDENTITY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: bash ci/sign_notarize_mac.sh "dist/Human Typer.app"
+
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: Compress-Archive -Path dist/HumanTyper -DestinationPath "${{ matrix.zipname }}" -Force
@@ -131,6 +143,17 @@ jobs:
 
       - name: Build the app
         run: python -m PyInstaller --noconfirm --clean HumanTyper.spec
+
+      - name: Sign & notarize (macOS Intel)
+        # No-op (unsigned) unless the Apple secrets are set, so this never breaks builds.
+        env:
+          APPLE_DEV_ID_CERT_P12: ${{ secrets.APPLE_DEV_ID_CERT_P12 }}
+          APPLE_DEV_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEV_ID_CERT_PASSWORD }}
+          APPLE_DEV_ID_IDENTITY: ${{ secrets.APPLE_DEV_ID_IDENTITY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: bash ci/sign_notarize_mac.sh "dist/Human Typer.app"
 
       - name: Package
         run: ditto -c -k --sequesterRsrc --keepParent "dist/Human Typer.app" "HumanTyper-macOS-Intel.zip"
