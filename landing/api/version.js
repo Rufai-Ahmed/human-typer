@@ -11,10 +11,12 @@ module.exports = async (req, res) => {
 
     const repo = process.env.RELEASES_REPO || "Rufai-Ahmed/human-typer";
     const base = `https://github.com/${repo}/releases/latest/download`;
+    const mac = `${base}/HumanTyper-macOS.zip`;   // one universal build for all Macs
     const downloads = {
         windows: `${base}/HumanTyper-Windows.zip`,
-        macArm: `${base}/HumanTyper-macOS-AppleSilicon.zip`,
-        macIntel: `${base}/HumanTyper-macOS-Intel.zip`,
+        mac,
+        macArm: mac,    // back-compat: updaters from <=1.3.0 asked for these keys
+        macIntel: mac,
     };
 
     try {

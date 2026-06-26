@@ -1,13 +1,13 @@
 name: Build Human Typer
 
 # Builds the distributable apps in the cloud:
-#   - Windows  -> HumanTyper-Windows.zip            (the .exe + its files)
-#   - macOS    -> HumanTyper-macOS-AppleSilicon.zip (M-series Macs)
-#   - macOS    -> HumanTyper-macOS-Intel.zip        (older Intel Macs, best-effort)
+#   - Windows  -> HumanTyper-Windows.zip   (the .exe + its files)
+#   - macOS    -> HumanTyper-macOS.zip      (ONE universal2 build: native on both
+#                                            Apple Silicon and Intel Macs)
 #
-# Design: Windows + Apple Silicon build fast and reliably, so they gate the
-# release. Intel macOS runners queue slowly, so the Intel build runs as its OWN
-# job that NEVER blocks the release — it just attaches its zip whenever it finishes.
+# The macOS build is universal2, produced entirely on the arm64 runner using the
+# python.org universal2 interpreter. That removes any dependence on Intel runners
+# (GitHub retired macos-13 in Dec 2025; the macos-*-intel images sunset Aug 2027).
 #
 # Trigger it two ways:
 #   1. Manually: GitHub -> Actions -> "Build Human Typer" -> Run workflow.
@@ -26,23 +26,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: ${{ matrix.label }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30        # fail fast instead of hanging if a runner is scarce
-    strategy:
-      fail-fast: false         # a macOS hiccup must not block the Windows build
-      matrix:
-        include:
-          - os: windows-latest
-            label: Windows
-            artifact: HumanTyper-Windows
-            zipname: HumanTyper-Windows.zip
-          - os: macos-latest
-            label: macOS (Apple Silicon)
-            artifact: HumanTyper-macOS-AppleSilicon
-            zipname: HumanTyper-macOS-AppleSilicon.zip
-
+  build-windows:
+    name: Windows
+    runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - name: Check out the code
         uses: actions/checkout@v4
@@ -50,7 +37,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'   # change to '3.11' if any dep lacks 3.12 wheels
+          python-version: '3.12'
           cache: pip
           cache-dependency-path: requirements.txt
 
@@ -62,8 +49,56 @@ jobs:
       - name: Build the app
         run: python -m PyInstaller --noconfirm --clean HumanTyper.spec
 
-      - name: Sign & notarize (macOS)
-        if: runner.os == 'macOS'
+      - name: Package
+        run: Compress-Archive -Path dist/HumanTyper -DestinationPath "HumanTyper-Windows.zip" -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HumanTyper-Windows
+          path: HumanTyper-Windows.zip
+          if-no-files-found: error
+
+  build-macos:
+    name: macOS (universal)
+    runs-on: macos-latest        # arm64; we build a fat binary that also runs on Intel
+    timeout-minutes: 30
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Install universal2 Python (python.org)
+        # setup-python ships single-arch builds; PyInstaller's universal2 target
+        # needs a universal2 interpreter, which the python.org pkg provides.
+        run: |
+          PY=3.12.8
+          PKG="python-${PY}-macos11.pkg"
+          curl -fsSLO "https://www.python.org/ftp/python/${PY}/${PKG}"
+          sudo installer -pkg "$PKG" -target /
+          echo "/Library/Frameworks/Python.framework/Versions/3.12/bin" >> "$GITHUB_PATH"
+
+      - name: Confirm the interpreter is universal2
+        run: |
+          which python3
+          python3 --version
+          lipo -archs "$(python3 -c 'import sys; print(sys.executable)')"
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip wheel
+          python3 -m pip install -r requirements.txt pyinstaller
+
+      - name: Build the app (universal2)
+        run: python3 -m PyInstaller --noconfirm --clean HumanTyper.spec
+
+      - name: Verify the binary is universal (x86_64 + arm64)
+        run: |
+          BIN="dist/Human Typer.app/Contents/MacOS/HumanTyper"
+          echo "archs: $(lipo -archs "$BIN")"
+          lipo -archs "$BIN" | grep -q x86_64 && lipo -archs "$BIN" | grep -q arm64 \
+            || { echo "ERROR: not a universal binary"; exit 1; }
+
+      - name: Sign & notarize
         # No-op (unsigned) unless the Apple secrets are set, so this never breaks builds.
         env:
           APPLE_DEV_ID_CERT_P12: ${{ secrets.APPLE_DEV_ID_CERT_P12 }}
@@ -74,25 +109,20 @@ jobs:
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
         run: bash ci/sign_notarize_mac.sh "dist/Human Typer.app"
 
-      - name: Package (Windows)
-        if: runner.os == 'Windows'
-        run: Compress-Archive -Path dist/HumanTyper -DestinationPath "${{ matrix.zipname }}" -Force
-
-      - name: Package (macOS)
-        if: runner.os == 'macOS'
+      - name: Package
         # ditto preserves the .app bundle's symlinks/permissions; plain zip can break it.
-        run: ditto -c -k --sequesterRsrc --keepParent "dist/Human Typer.app" "${{ matrix.zipname }}"
+        run: ditto -c -k --sequesterRsrc --keepParent "dist/Human Typer.app" "HumanTyper-macOS.zip"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}    # space-free name (folder paths must not break)
-          path: ${{ matrix.zipname }}
+          name: HumanTyper-macOS
+          path: HumanTyper-macOS.zip
           if-no-files-found: error
 
   release:
     name: Publish GitHub Release
-    needs: build
+    needs: [build-windows, build-macos]
     # always() so a single flaky build leg can't block publishing the ones that succeeded.
     if: ${{ always() && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
@@ -118,67 +148,3 @@ jobs:
           printf 'Publishing: %s\n' "${files[@]}"
           gh release create "$tag" --title "Human Typer $tag" --generate-notes "${files[@]}" \
             || gh release upload "$tag" "${files[@]}" --clobber
-
-  build-intel:
-    name: macOS (Intel) — best effort
-    # macos-13 (Intel) was retired by GitHub in Dec 2025 and just queued for 24h
-    # then cancelled. macos-15-intel is the current x86_64 image (supported to Aug 2027).
-    runs-on: macos-15-intel
-    # Independent of build/release; stays non-blocking so it can never hold up the
-    # main release. It attaches its zip to the release whenever it finishes.
-    timeout-minutes: 45
-    steps:
-      - name: Check out the code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: requirements.txt
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip wheel
-          python -m pip install -r requirements.txt pyinstaller
-
-      - name: Build the app
-        run: python -m PyInstaller --noconfirm --clean HumanTyper.spec
-
-      - name: Sign & notarize (macOS Intel)
-        # No-op (unsigned) unless the Apple secrets are set, so this never breaks builds.
-        env:
-          APPLE_DEV_ID_CERT_P12: ${{ secrets.APPLE_DEV_ID_CERT_P12 }}
-          APPLE_DEV_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEV_ID_CERT_PASSWORD }}
-          APPLE_DEV_ID_IDENTITY: ${{ secrets.APPLE_DEV_ID_IDENTITY }}
-          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
-        run: bash ci/sign_notarize_mac.sh "dist/Human Typer.app"
-
-      - name: Package
-        run: ditto -c -k --sequesterRsrc --keepParent "dist/Human Typer.app" "HumanTyper-macOS-Intel.zip"
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: HumanTyper-macOS-Intel
-          path: HumanTyper-macOS-Intel.zip
-          if-no-files-found: error
-
-      - name: Attach to the release when it exists (tags only)
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          tag="${GITHUB_REF_NAME}"
-          # The main release is published by the `release` job; wait up to ~5 min for it.
-          for i in $(seq 1 30); do
-            if gh release view "$tag" >/dev/null 2>&1; then break; fi
-            echo "waiting for release $tag to exist..."; sleep 10
-          done
-          gh release upload "$tag" HumanTyper-macOS-Intel.zip --clobber \
-            || gh release create "$tag" --title "Human Typer $tag" --generate-notes HumanTyper-macOS-Intel.zip

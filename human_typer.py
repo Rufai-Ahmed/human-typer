@@ -410,8 +410,9 @@ def check_update() -> dict:
             if sys.platform.startswith("win"):
                 url = downloads.get("windows")
             elif sys.platform == "darwin":
-                import platform as _pf
-                url = downloads.get("macArm") if _pf.machine() == "arm64" else downloads.get("macIntel")
+                # One universal build serves all Macs now; fall back to the old
+                # per-arch keys so updaters from <=1.3.0 still resolve a URL.
+                url = downloads.get("mac") or downloads.get("macArm") or downloads.get("macIntel")
             else:
                 url = downloads.get("windows")
             return {"update_available": True, "latest": latest, "url": url or ""}

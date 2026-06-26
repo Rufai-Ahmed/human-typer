@@ -53,7 +53,7 @@ exe = EXE(
     console=False,          # windowed: no terminal window
     disable_windowed_traceback=False,
     argv_emulation=True,    # let macOS pass file/open events through cleanly
-    target_arch=None,
+    target_arch='universal2' if sys.platform == 'darwin' else None,
     codesign_identity=None,
     entitlements_file=None,
     icon=ICON,
