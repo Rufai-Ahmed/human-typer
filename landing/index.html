@@ -161,7 +161,7 @@
         <section id="download" class="section download">
             <div class="dl-card">
                 <h2 class="section-title">Download</h2>
-                <p class="section-sub">Free to download — activate it with the license key from your purchase.</p>
+                <p class="section-sub">Free to download — activate it with the license key from your purchase. <strong>Windows opens in one click;</strong> macOS needs a quick one-time approval (steps below).</p>
                 <div class="dl-buttons">
                     <a class="btn btn-primary btn-lg" href="https://github.com/Rufai-Ahmed/human-typer/releases/latest/download/HumanTyper-Windows.zip" rel="noopener">Download for Windows</a>
                     <a class="btn btn-primary btn-lg" href="https://github.com/Rufai-Ahmed/human-typer/releases/latest/download/HumanTyper-macOS-AppleSilicon.zip" rel="noopener">Download for macOS</a>
@@ -170,12 +170,19 @@
 
                 <div class="dl-notes">
                     <div class="dl-note">
-                        <strong>macOS first launch</strong>
-                        <span>Right-click the app → <em>Open</em>, then allow it under System Settings → Privacy &amp; Security → Accessibility.</span>
+                        <strong>Opening it on macOS (first time)</strong>
+                        <span>macOS shows a one-time "Apple could not verify..." notice because the app isn't notarized by Apple yet. It's safe. Here's how to open it:</span>
+                        <ol class="dl-steps">
+                            <li>Unzip it and drag <em>Human Typer</em> into your <em>Applications</em> folder.</li>
+                            <li>Double-click it. When the notice appears, click <em>Done</em> (not "Move to Bin").</li>
+                            <li>Open <em>System Settings → Privacy &amp; Security</em>, scroll down to <em>Security</em>, and click <em>Open Anyway</em> next to "Human Typer". Confirm with Touch ID or your password.</li>
+                            <li>One time only: turn it on under <em>Privacy &amp; Security → Accessibility</em> (and <em>Input Monitoring</em>) so it can type and the Esc-stop works.</li>
+                        </ol>
+                        <span class="dl-tip">Faster, with Terminal: run <code>xattr -dr com.apple.quarantine "/Applications/Human Typer.app"</code> and it opens with a normal double-click.</span>
                     </div>
                     <div class="dl-note">
-                        <strong>Windows first launch</strong>
-                        <span>Click <em>More info → Run anyway</em> past SmartScreen. Needs the free Edge WebView2 runtime (preinstalled on Win 10/11).</span>
+                        <strong>Opening it on Windows (first time)</strong>
+                        <span>Smoothest option. If Windows SmartScreen appears, click <em>More info → Run anyway</em>. It uses the free Edge WebView2 runtime, already built into Windows 10 &amp; 11.</span>
                     </div>
                 </div>
             </div>
