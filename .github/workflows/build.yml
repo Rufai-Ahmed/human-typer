@@ -121,9 +121,11 @@ jobs:
 
   build-intel:
     name: macOS (Intel) — best effort
-    runs-on: macos-13
-    # Independent of build/release. Intel runners queue slowly, so this NEVER blocks
-    # the main release — it attaches its zip to the release whenever it finishes.
+    # macos-13 (Intel) was retired by GitHub in Dec 2025 and just queued for 24h
+    # then cancelled. macos-15-intel is the current x86_64 image (supported to Aug 2027).
+    runs-on: macos-15-intel
+    # Independent of build/release; stays non-blocking so it can never hold up the
+    # main release. It attaches its zip to the release whenever it finishes.
     timeout-minutes: 45
     steps:
       - name: Check out the code
