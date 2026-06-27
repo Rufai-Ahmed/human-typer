@@ -92,15 +92,25 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // ===== Accessibility permission gate =====
+    // ===== Permission gate (Accessibility + Input Monitoring) =====
+    const btnOpenInput = document.getElementById('btn-open-input');
+    const permAccDot = document.getElementById('perm-acc-dot');
+    const permImDot = document.getElementById('perm-im-dot');
+
+    function setPermDots(d) {
+        if (permAccDot) permAccDot.classList.toggle('on', !!(d && d.accessibility));
+        if (permImDot) permImDot.classList.toggle('on', !!(d && d.input_monitoring));
+    }
+
+    async function fetchPerms() {
+        try { return await (await fetch('/api/permissions')).json(); }
+        catch (e) { return { accessibility: true, input_monitoring: true }; }   // fail-open
+    }
+
     async function checkAccess() {
-        let granted = true;
-        try {
-            const res = await fetch('/api/permissions');
-            const data = await res.json();
-            granted = !!data.accessibility;
-        } catch (err) { granted = true; }   // fail-open if the probe is unreachable
-        if (granted) { showApp(); } else { showAccessGate(); }
+        const d = await fetchPerms();
+        setPermDots(d);
+        if (d.accessibility && d.input_monitoring) { showApp(); } else { showAccessGate(); }
     }
 
     function showAccessGate() {
@@ -109,17 +119,19 @@ document.addEventListener('DOMContentLoaded', () => {
         accessGate.classList.remove('hidden');
         if (accessPoll) clearInterval(accessPoll);
         accessPoll = setInterval(async () => {
-            try {
-                const res = await fetch('/api/permissions');
-                const data = await res.json();
-                if (data && data.accessibility) showApp();
-            } catch (err) { /* keep waiting */ }
+            const d = await fetchPerms();
+            setPermDots(d);
+            if (d.accessibility && d.input_monitoring) showApp();
         }, 1500);
     }
 
     if (btnOpenAccess) btnOpenAccess.addEventListener('click', () => {
         fetch('/api/open-accessibility', { method: 'POST' });
-        accessStatus.textContent = 'Opened System Settings. Toggle Human Typer on, then come back; this unlocks automatically.';
+        accessStatus.textContent = 'Opened Accessibility. Toggle Human Typer on, then come back.';
+    });
+    if (btnOpenInput) btnOpenInput.addEventListener('click', () => {
+        fetch('/api/open-input-monitoring', { method: 'POST' });
+        accessStatus.textContent = 'Opened Input Monitoring. Toggle Human Typer on, then come back.';
     });
 
     function showApp() {

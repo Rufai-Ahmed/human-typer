@@ -585,6 +585,32 @@ def accessibility_ok() -> bool:
         return True
 
 
+def input_monitoring_ok() -> bool:
+    """True if the app may read global key state.
+
+    The Esc-anywhere stop and the Cmd/Ctrl+Shift+H quick-type both poll global key
+    state (CGEventSourceKeyState), which macOS gates behind Input Monitoring; without
+    it those silently no-op. Fail-open if the probe itself errors.
+    """
+    if sys.platform != "darwin" or not HAS_COREGRAPHICS:
+        return True
+    try:
+        cg.CGPreflightListenEventAccess.restype = ctypes.c_bool
+        return bool(cg.CGPreflightListenEventAccess())
+    except Exception:
+        return True
+
+
+def request_input_monitoring() -> None:
+    """Prompt for Input Monitoring and register the app in the Privacy list."""
+    if sys.platform == "darwin" and HAS_COREGRAPHICS:
+        try:
+            cg.CGRequestListenEventAccess.restype = ctypes.c_bool
+            cg.CGRequestListenEventAccess()
+        except Exception:
+            pass
+
+
 def _gauss_positive(mean: float, rel_std: float) -> float:
     """Gaussian sample folded to stay non-negative."""
     return abs(random.gauss(mean, mean * rel_std))
@@ -872,7 +898,8 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/update":
             self.send_json(check_update())
         elif parsed.path == "/api/permissions":
-            self.send_json({"accessibility": accessibility_ok()})
+            self.send_json({"accessibility": accessibility_ok(),
+                            "input_monitoring": input_monitoring_ok()})
         elif parsed.path == "/api/profiles":
             self.send_json({"profiles": load_user_profiles()})
         elif not path.startswith("/api/"):
@@ -975,6 +1002,18 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
                 if sys.platform == "darwin":
                     subprocess.Popen(["open",
                         "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+                elif sys.platform.startswith("win"):
+                    subprocess.Popen("start ms-settings:privacy", shell=True)
+                self.send_json({"ok": True})
+            except Exception as e:
+                self.send_json({"ok": False, "error": str(e)}, 400)
+
+        elif parsed.path == "/api/open-input-monitoring":
+            try:
+                if sys.platform == "darwin":
+                    request_input_monitoring()   # register + prompt
+                    subprocess.Popen(["open",
+                        "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"])
                 elif sys.platform.startswith("win"):
                     subprocess.Popen("start ms-settings:privacy", shell=True)
                 self.send_json({"ok": True})
@@ -1089,6 +1128,7 @@ def run_app(port=5000, force_browser=False):
     url = f"http://127.0.0.1:{p}"
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     start_global_abort_listener()
+    request_input_monitoring()   # register in the Privacy list so global Esc/hotkey can work
 
     if not force_browser:
         try:
