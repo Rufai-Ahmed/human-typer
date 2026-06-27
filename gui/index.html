@@ -28,6 +28,28 @@
         </div>
     </div>
 
+    <!-- Accessibility Permission Gate -->
+    <div id="access-gate" class="license-gate hidden">
+        <div class="license-card">
+            <span class="logo-icon big" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+            </span>
+            <p class="prompt-line"><span class="prompt">~/permissions $</span><span class="caret">_</span></p>
+            <h1 class="license-title">Enable Accessibility</h1>
+            <p class="license-sub">Human Typer works by sending real keystrokes, which macOS only allows after you switch it on. The app stays locked until you do.</p>
+            <ol class="access-steps">
+                <li>Click <strong>Open System Settings</strong> below.</li>
+                <li>Under <strong>Privacy &amp; Security &rarr; Accessibility</strong>, turn <strong>Human Typer</strong> on. Do the same under <strong>Input Monitoring</strong> so the global <kbd class="keycap">esc</kbd> stop works.</li>
+                <li>Come back here, it unlocks on its own.</li>
+            </ol>
+            <button id="btn-open-access" class="btn btn-primary license-btn">Open System Settings</button>
+            <p id="access-status" class="license-foot">Waiting for Accessibility. If it doesn't unlock right after you enable it, quit and reopen the app.</p>
+        </div>
+    </div>
+
     <!-- Main App -->
     <div id="app-root" class="app-container hidden">
         <!-- Update banner (shown when a newer version is available) -->
@@ -162,11 +184,19 @@
                 <section class="panel sandbox-panel">
                     <div class="panel-header">
                         <h2 class="eyebrow"><span class="prompt">&#9656;</span> TEST FIELD</h2>
-                        <span class="panel-tag">try it here</span>
+                        <button id="btn-test" class="btn btn-secondary btn-sm">
+                            <span class="icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+                            </span> Test here
+                        </button>
                     </div>
                     <div class="sandbox-container">
-                        <input type="text" id="sandbox-input" placeholder="Click here, hit Start, and watch it type, no app-switching needed.">
-                        <p class="sandbox-desc">Use this to preview the feel before typing into a real app.</p>
+                        <input type="text" id="sandbox-input" placeholder="Click Test here and watch it type into this field, no app-switching needed.">
+                        <div id="sandbox-status" class="sandbox-status hidden">
+                            <span id="sandbox-status-text">starting</span>
+                            <button id="btn-test-stop" class="btn btn-danger btn-sm">stop <kbd class="keycap">esc</kbd></button>
+                        </div>
+                        <p class="sandbox-desc">Types the text from the buffer above into this field, so you can preview the feel before a real app.</p>
                     </div>
                 </section>
             </div>

@@ -421,6 +421,25 @@ def check_update() -> dict:
     return {"update_available": False, "latest": APP_VERSION, "url": ""}
 
 
+def accessibility_ok() -> bool:
+    """True when the OS lets us send keystrokes.
+
+    macOS gates synthetic keystrokes behind the Accessibility permission; we read
+    it with AXIsProcessTrusted(). Other platforms don't gate this. Fail-open if the
+    probe itself errors, so a check bug can never permanently brick the app.
+    """
+    if sys.platform != "darwin":
+        return True
+    try:
+        import ctypes
+        from ctypes import util as _ctutil
+        appsvc = ctypes.cdll.LoadLibrary(_ctutil.find_library("ApplicationServices"))
+        appsvc.AXIsProcessTrusted.restype = ctypes.c_bool
+        return bool(appsvc.AXIsProcessTrusted())
+    except Exception:
+        return True
+
+
 def _gauss_positive(mean: float, rel_std: float) -> float:
     """Gaussian sample folded to stay non-negative."""
     return abs(random.gauss(mean, mean * rel_std))
@@ -695,6 +714,8 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(e)}, 500)
         elif parsed.path == "/api/update":
             self.send_json(check_update())
+        elif parsed.path == "/api/permissions":
+            self.send_json({"accessibility": accessibility_ok()})
         elif not path.startswith("/api/"):
             self.serve_static_path(path)   # index.html, css, js, fonts/*.woff2, svg, ...
         else:
@@ -714,6 +735,9 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/type":
             if not is_activated():
                 self.send_json({"error": "License required."}, 403)
+                return
+            if not accessibility_ok():
+                self.send_json({"error": "accessibility_required"}, 403)
                 return
             body = self._read_body()
             try:
@@ -765,6 +789,17 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
                     self.send_json({"ok": True})
                 else:
                     self.send_json({"ok": False, "error": "bad url"}, 400)
+            except Exception as e:
+                self.send_json({"ok": False, "error": str(e)}, 400)
+
+        elif parsed.path == "/api/open-accessibility":
+            try:
+                if sys.platform == "darwin":
+                    subprocess.Popen(["open",
+                        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+                elif sys.platform.startswith("win"):
+                    subprocess.Popen("start ms-settings:privacy", shell=True)
+                self.send_json({"ok": True})
             except Exception as e:
                 self.send_json({"ok": False, "error": str(e)}, 400)
         else:

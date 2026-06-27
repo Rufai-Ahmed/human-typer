@@ -6,6 +6,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnActivate = document.getElementById('btn-activate');
     const licenseError = document.getElementById('license-error');
 
+    // --- Accessibility gate ---
+    const accessGate = document.getElementById('access-gate');
+    const btnOpenAccess = document.getElementById('btn-open-access');
+    const accessStatus = document.getElementById('access-status');
+
     // --- Settings elements ---
     const speedSlider = document.getElementById('speed');
     const speedValue = document.getElementById('speed-value');
@@ -24,6 +29,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnStart = document.getElementById('btn-start');
     const btnAbort = document.getElementById('btn-abort');
 
+    // --- Test field (sandbox) ---
+    const sandboxInput = document.getElementById('sandbox-input');
+    const btnTest = document.getElementById('btn-test');
+    const sandboxStatus = document.getElementById('sandbox-status');
+    const sandboxStatusText = document.getElementById('sandbox-status-text');
+    const btnTestStop = document.getElementById('btn-test-stop');
+
     // --- Overlay ---
     const typingOverlay = document.getElementById('typing-overlay');
     const countdownTimer = document.getElementById('countdown-timer');
@@ -40,20 +52,54 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let pollInterval = null;
     let originalCountdown = 5.0;
+    let sandboxMode = false;
+    let accessPoll = null;
 
     // ============================ License Gate ============================
     async function checkLicense() {
         try {
             const res = await fetch('/api/license');
             const data = await res.json();
-            if (data.activated) { showApp(); } else { showGate(); }
+            if (data.activated) { checkAccess(); } else { showGate(); }
         } catch (err) {
             showGate();
         }
     }
 
+    // ===== Accessibility permission gate =====
+    async function checkAccess() {
+        let granted = true;
+        try {
+            const res = await fetch('/api/permissions');
+            const data = await res.json();
+            granted = !!data.accessibility;
+        } catch (err) { granted = true; }   // fail-open if the probe is unreachable
+        if (granted) { showApp(); } else { showAccessGate(); }
+    }
+
+    function showAccessGate() {
+        licenseGate.classList.add('hidden');
+        appRoot.classList.add('hidden');
+        accessGate.classList.remove('hidden');
+        if (accessPoll) clearInterval(accessPoll);
+        accessPoll = setInterval(async () => {
+            try {
+                const res = await fetch('/api/permissions');
+                const data = await res.json();
+                if (data && data.accessibility) showApp();
+            } catch (err) { /* keep waiting */ }
+        }, 1500);
+    }
+
+    if (btnOpenAccess) btnOpenAccess.addEventListener('click', () => {
+        fetch('/api/open-accessibility', { method: 'POST' });
+        accessStatus.textContent = 'Opened System Settings. Toggle Human Typer on, then come back; this unlocks automatically.';
+    });
+
     function showApp() {
         licenseGate.classList.add('hidden');
+        accessGate.classList.add('hidden');
+        if (accessPoll) { clearInterval(accessPoll); accessPoll = null; }
         appRoot.classList.remove('hidden');
     }
 
@@ -165,6 +211,7 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('Please enter some text to type first.');
             return;
         }
+        sandboxMode = false;
 
         const delay_ms = parseFloat(speedSlider.value);
         const delay = parseFloat(delaySlider.value);
@@ -201,6 +248,53 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // ============================ Test Field (in-window preview) ============================
+    // Types into the in-window field WITHOUT the full-screen overlay, so the field
+    // stays visible while it fills. The main Start button keeps the overlay (you switch apps).
+    async function startSandbox() {
+        const text = textInput.value;
+        if (!text.trim()) { alert('Type some text in the buffer above first, then Test here to preview it.'); return; }
+        if (sandboxMode) return;
+        const delay_ms = parseFloat(speedSlider.value);
+        const humanize = humanizeCheckbox.checked;
+        const typos = humanize ? parseFloat(typosSlider.value) / 100.0 : 0.0;
+        if (pollInterval) clearInterval(pollInterval);
+        sandboxMode = true;
+        sandboxInput.value = '';
+        sandboxInput.focus();
+        sandboxStatus.classList.remove('hidden');
+        sandboxStatusText.textContent = 'get ready';
+        try {
+            const res = await fetch('/api/type', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text, delay_ms, humanize, typos, delay: 1 })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                sandboxInput.focus();   // keep the field focused so keystrokes land here
+                pollInterval = setInterval(pollStatus, 150);
+            } else {
+                endSandbox(data.error === 'accessibility_required' ? 'blocked' : 'failed');
+                alert(data.error === 'accessibility_required'
+                    ? 'Enable Accessibility first (see the gate steps).'
+                    : (data.error || 'Could not start the test.'));
+            }
+        } catch (err) {
+            endSandbox('error');
+            alert('Error connecting to the typing engine.');
+        }
+    }
+
+    function endSandbox(finalText) {
+        if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+        if (finalText) sandboxStatusText.textContent = finalText;
+        setTimeout(() => { sandboxStatus.classList.add('hidden'); sandboxMode = false; }, 1200);
+    }
+
+    if (btnTest) btnTest.addEventListener('click', startSandbox);
+    if (btnTestStop) btnTestStop.addEventListener('click', abort);
+
     // ============================ Abort ============================
     async function abort() {
         try {
@@ -213,7 +307,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // In-window Esc fallback (the engine also listens globally via the OS).
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && !typingOverlay.classList.contains('hidden')) {
+        if (e.key === 'Escape' && (sandboxMode || !typingOverlay.classList.contains('hidden'))) {
             abort();
         }
     });
@@ -223,6 +317,20 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const res = await fetch('/api/status');
             const data = await res.json();
+
+            if (sandboxMode) {
+                if (data.state === 'countdown') {
+                    sandboxStatusText.textContent = `starting in ${Math.ceil(data.countdown_remaining)}`;
+                } else if (data.state === 'typing') {
+                    const pct = data.total_chars > 0 ? Math.round(data.typed_chars / data.total_chars * 100) : 0;
+                    sandboxStatusText.textContent = `typing ${pct}%`;
+                } else if (data.state === 'done') {
+                    endSandbox('done');
+                } else if (data.state === 'aborted') {
+                    endSandbox('stopped');
+                }
+                return;
+            }
 
             if (data.state === 'countdown') {
                 const remaining = data.countdown_remaining;

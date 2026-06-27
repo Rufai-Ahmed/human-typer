@@ -843,6 +843,30 @@ body{
 .license-foot{ font-size:var(--text-eyebrow); color:var(--text-muted); line-height:var(--lh-ui); }
 .license-foot strong{ color:var(--text-muted); font-weight:var(--fw-medium); }
 
+/* Accessibility gate steps */
+.access-steps{
+  text-align:left;
+  margin:var(--s-2) 0 var(--s-4);
+  padding-left:1.2rem;
+  display:flex; flex-direction:column; gap:var(--s-2);
+  font-size:var(--text-sm); color:var(--text-muted); line-height:var(--lh-ui);
+}
+.access-steps strong{ color:var(--text); font-weight:var(--fw-medium); }
+#access-status{ margin-top:var(--s-3); }
+
+/* small button (Test here / inline stop) */
+.btn-sm{ padding:6px 10px; font-size:var(--text-sm); }
+
+/* inline test-field status — replaces the blocking overlay for in-window tests */
+.sandbox-status{
+  display:flex; align-items:center; justify-content:space-between; gap:var(--s-3);
+  margin-top:var(--s-3); padding:var(--s-2) var(--s-3);
+  border:var(--bw-thin) solid var(--border); border-radius:var(--r-input);
+  background:var(--surface-2);
+  font-family:var(--font-mono); font-size:var(--text-sm); color:var(--accent-text);
+  font-variant-numeric:var(--num);
+}
+
 /* ============================================================
    UPDATE BANNER
    ============================================================ */
