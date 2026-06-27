@@ -1,107 +1,92 @@
 #!/usr/bin/env python3
 """
-Generate the Human Typer app icon.
+Generate the Human Typer app icon — "Terminal Refined" look.
 
-Draws a keyboard on the indigo->violet brand gradient and exports:
-  - icon.icns  (macOS app bundle)
-  - icon.ico   (Windows executable)
-  - icon_1024.png (master, for stores/web)
+A flat near-black squircle (the keyboard deck) with a 1px hairline edge and a
+phosphor-green terminal prompt `>_`. No gradients, no glow — matches the app's
+design tokens (bg #0a0c0d, surface #101314, hairline #242a2b, accent #34c07d).
 
-Requires Pillow.  Run:  python make_icon.py
+Exports:
+  - icon.icns       (macOS app bundle, via iconutil)
+  - icon.ico        (Windows executable)
+  - icon_1024.png   (master, for stores/web)
+  - landing/icon.png (favicon / og image)
+
+Requires Pillow + macOS iconutil (for the .icns). Run:  python make_icon.py
 """
 
 import os
+import shutil
 import subprocess
-import sys
 
 from PIL import Image, ImageDraw
 
-S = 1024
-TOP = (99, 102, 241)    # indigo  #6366f1
-BOT = (139, 92, 246)    # violet  #8b5cf6
+SS = 4                        # supersample factor for crisp antialiased edges
+DECK = (10, 12, 13, 255)      # #0a0c0d  page/deck
+HAIRLINE = (45, 52, 53, 255)  # slightly lifted edge so the squircle reads as a panel
+ACCENT = (52, 192, 125, 255)  # #34c07d phosphor green
 
 
-def lerp(a, b, t):
-    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+def _thick(draw, points, width, fill):
+    """A thick polyline with round caps + joins."""
+    draw.line(points, fill=fill, width=width, joint="curve")
+    r = width / 2
+    for x, y in (points[0], points[-1]):
+        draw.ellipse([x - r, y - r, x + r, y + r], fill=fill)
 
 
-def gradient(size):
-    col = Image.new("RGB", (1, size))
-    for y in range(size):
-        col.putpixel((0, y), lerp(TOP, BOT, y / (size - 1)))
-    return col.resize((size, size))
+def render(px):
+    img = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
 
+    # Squircle "deck" (macOS-grid-ish margin + corner radius).
+    m = px * 0.092
+    side = px - 2 * m
+    radius = side * 0.2237
+    box = [m, m, px - m, px - m]
+    d.rounded_rectangle(box, radius=radius, fill=DECK)
+    d.rounded_rectangle(box, radius=radius, outline=HAIRLINE, width=max(1, int(px * 0.004)))
 
-def rounded_mask(size, radius):
-    m = Image.new("L", (size, size), 0)
-    ImageDraw.Draw(m).rounded_rectangle([0, 0, size - 1, size - 1], radius=radius, fill=255)
-    return m
-
-
-def make_master():
-    img = gradient(S).convert("RGBA")
-    draw = ImageDraw.Draw(img, "RGBA")
-
-    # Soft top highlight for depth.
-    draw.ellipse([-S * 0.2, -S * 0.55, S * 1.2, S * 0.35], fill=(255, 255, 255, 26))
-
-    # Keyboard body.
-    kb_w, kb_h = int(S * 0.64), int(S * 0.40)
-    kx = (S - kb_w) // 2
-    ky = (S - kb_h) // 2 + int(S * 0.03)
-    draw.rounded_rectangle([kx, ky, kx + kb_w, ky + kb_h],
-                           radius=int(S * 0.055), fill=(255, 255, 255, 40))
-
-    cols, rows = 5, 3
-    pad = int(S * 0.030)
-    gap = int(S * 0.020)
-    inner_x = kx + pad
-    inner_y = ky + pad
-    inner_w = kb_w - 2 * pad
-    spacebar_h = int(S * 0.045)
-    key_area_h = kb_h - 2 * pad - spacebar_h - gap
-    key_w = (inner_w - (cols - 1) * gap) / cols
-    key_h = (key_area_h - (rows - 1) * gap) / rows
-    r = int(key_h * 0.28)
-    white = (255, 255, 255, 238)
-
-    for rr in range(rows):
-        for cc in range(cols):
-            x0 = inner_x + cc * (key_w + gap)
-            y0 = inner_y + rr * (key_h + gap)
-            draw.rounded_rectangle([x0, y0, x0 + key_w, y0 + key_h], radius=r, fill=white)
-
-    # Spacebar.
-    sb_y0 = inner_y + rows * (key_h + gap)
-    sb_x0 = inner_x + key_w * 0.9
-    sb_x1 = inner_x + inner_w - key_w * 0.9
-    draw.rounded_rectangle([sb_x0, sb_y0, sb_x1, sb_y0 + spacebar_h], radius=r, fill=white)
-
-    # Squircle mask.
-    out = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    out.paste(img, (0, 0), rounded_mask(S, int(S * 0.225)))
-    return out
+    cx, cy = px / 2, px / 2
+    w = px * 0.055                      # stroke weight of the prompt glyph
+    ox = -px * 0.055                    # shift `>_` group left so it reads centred
+    chx, chy = px * 0.085, px * 0.125   # `>` chevron half-width / half-height
+    _thick(d, [(cx + ox - chx, cy - chy), (cx + ox + chx, cy), (cx + ox - chx, cy + chy)], int(w), ACCENT)
+    uy = cy + px * 0.135                # `_` caret, lower-right, like a waiting prompt
+    _thick(d, [(cx + ox + px * 0.115, uy), (cx + ox + px * 0.265, uy)], int(w), ACCENT)
+    return img
 
 
 def main():
-    master = make_master()
+    root = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(root)
+
+    master = render(1024 * SS).resize((1024, 1024), Image.LANCZOS)
     master.save("icon_1024.png")
+    print("wrote icon_1024.png")
 
-    iconset = "AppIcon.iconset"
-    os.makedirs(iconset, exist_ok=True)
-    for base in (16, 32, 128, 256, 512):
-        for scale in (1, 2):
-            px = base * scale
-            suffix = "" if scale == 1 else "@2x"
-            master.resize((px, px), Image.LANCZOS).save(
-                os.path.join(iconset, f"icon_{base}x{base}{suffix}.png"))
+    master.save("icon.ico", sizes=[(s, s) for s in (16, 32, 48, 64, 128, 256)])
+    print("wrote icon.ico")
 
-    if sys.platform == "darwin":
+    os.makedirs("landing", exist_ok=True)
+    master.resize((512, 512), Image.LANCZOS).save("landing/icon.png")
+    print("wrote landing/icon.png")
+
+    if shutil.which("iconutil"):
+        iconset = "icon.iconset"
+        shutil.rmtree(iconset, ignore_errors=True)
+        os.makedirs(iconset)
+        specs = [(16, ""), (16, "@2x"), (32, ""), (32, "@2x"),
+                 (128, ""), (128, "@2x"), (256, ""), (256, "@2x"),
+                 (512, ""), (512, "@2x")]
+        for base, suffix in specs:
+            px = base * (2 if suffix else 1)
+            master.resize((px, px), Image.LANCZOS).save(f"{iconset}/icon_{base}x{base}{suffix}.png")
         subprocess.run(["iconutil", "-c", "icns", iconset, "-o", "icon.icns"], check=True)
-        print("Wrote icon.icns")
-
-    master.save("icon.ico", sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
-    print("Wrote icon.ico and icon_1024.png")
+        shutil.rmtree(iconset, ignore_errors=True)
+        print("wrote icon.icns")
+    else:
+        print("iconutil not found — skipping icon.icns (build on macOS to generate it)")
 
 
 if __name__ == "__main__":
