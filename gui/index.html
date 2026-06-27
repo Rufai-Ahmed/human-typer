@@ -38,17 +38,15 @@
                 </svg>
             </span>
             <p class="prompt-line"><span class="prompt">~/permissions $</span><span class="caret">_</span></p>
-            <h1 class="license-title">Enable permissions</h1>
-            <p class="license-sub">Human Typer needs two macOS permissions: one to type, one so the <kbd class="keycap">esc</kbd> stop and the hotkey work anywhere. It stays locked until both are on. A rebuild resets these, so you may need to re-enable them.</p>
+            <h1 class="license-title">Enable Accessibility</h1>
+            <p class="license-sub">Human Typer needs one macOS permission — <strong>Accessibility</strong> — to send keystrokes and to catch the global <kbd class="keycap">Cmd + .</kbd> stop. It stays locked until that's on. A rebuild can reset it, so you may need to re-enable it.</p>
             <ul class="perm-list">
-                <li><span id="perm-acc-dot" class="perm-dot"></span><span><strong>Accessibility</strong> lets it send keystrokes.</span></li>
-                <li><span id="perm-im-dot" class="perm-dot"></span><span><strong>Input Monitoring</strong> lets the global <kbd class="keycap">esc</kbd> stop and the <kbd class="keycap">Cmd/Ctrl + Shift + H</kbd> hotkey work.</span></li>
+                <li><span id="perm-acc-dot" class="perm-dot"></span><span><strong>Accessibility</strong> lets it type into any app and stop from anywhere.</span></li>
             </ul>
             <div class="access-buttons">
                 <button id="btn-open-access" class="btn btn-primary license-btn">Open Accessibility</button>
-                <button id="btn-open-input" class="btn btn-secondary license-btn">Open Input Monitoring</button>
             </div>
-            <p id="access-status" class="license-foot">Turn Human Typer on under each, then come back. It unlocks on its own.</p>
+            <p id="access-status" class="license-foot">Turn Human Typer on, then come back. It unlocks on its own.</p>
         </div>
     </div>
 
@@ -200,7 +198,7 @@
                             <path d="M12 16v-4"/><path d="M12 8h.01"/>
                         </svg>
                     </span>
-                    <span>Press <kbd class="keycap">esc</kbd> anytime to stop instantly, even while another app is focused.</span>
+                    <span>Press <kbd class="keycap">Cmd + .</kbd> from any app to stop instantly. <kbd class="keycap">esc</kbd> also stops while this window is focused.</span>
                 </div>
             </section>
 

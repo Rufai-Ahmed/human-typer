@@ -2,23 +2,33 @@
 # Sign Human Typer.app with a STABLE self-signed identity.
 #
 # Why: ad-hoc signatures (PyInstaller's default) change on every build, so macOS
-# treats each rebuild as a new app and forgets your Accessibility / Input
-# Monitoring grants. A stable identity keeps the grant across rebuilds & updates.
+# treats each rebuild as a brand-new app and forgets your Accessibility / Input
+# Monitoring grants. ONE stable identity keeps those grants across rebuilds.
 #
-# Run once (it creates the identity), then after each build:  ./sign_mac.sh
-# For SELLING to others, prefer a real Apple Developer ID (also enables
-# notarization and removes the Gatekeeper warning). This self-signed cert only
-# makes grants persist on machines where it's installed.
+# Self-healing: earlier versions checked `find-identity -v` (valid-only). A
+# self-signed cert is untrusted, so -v hid it; the script thought none existed and
+# created a fresh duplicate every build. That left several identical, untrusted
+# "Human Typer Self-Signed" certs, which made `codesign --sign <name>` AMBIGUOUS
+# and silently fall back to ad-hoc. This version lists WITHOUT -v, collapses the
+# duplicates to one, and signs by the identity's SHA-1 HASH (never the name).
 set -e
 cd "$(dirname "$0")"
 APP="dist/Human Typer.app"
 IDENTITY="Human Typer Self-Signed"
+KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 
 if [ ! -d "$APP" ]; then
     echo "No $APP — run ./build_mac.sh first."; exit 1
 fi
 
-if ! security find-identity -v -p codesigning | grep -q "$IDENTITY"; then
+# SHA-1 hashes of every code-signing identity with this name, sorted+deduped so the
+# pick is deterministic across builds even if a stray duplicate ever lingers.
+list_hashes() {
+    security find-identity -p codesigning 2>/dev/null \
+        | grep "$IDENTITY" | grep -oE '[[:xdigit:]]{40}' | sort -u
+}
+
+create_identity() {
     echo "Creating self-signed code-signing identity '$IDENTITY'..."
     TMP="$(mktemp -d)"
     cat > "$TMP/cfg" <<EOF
@@ -42,15 +52,38 @@ EOF
         -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES \
         -out "$TMP/id.p12" -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -passout "pass:$P12PW" 2>/dev/null \
       || openssl pkcs12 -export -out "$TMP/id.p12" -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -passout "pass:$P12PW"
-    # -A lets codesign use the key without a per-use access prompt.
-    security import "$TMP/id.p12" -k ~/Library/Keychains/login.keychain-db -P "$P12PW" -A
+    # -A: no per-use key-access prompt;  -T /usr/bin/codesign: let codesign use it.
+    security import "$TMP/id.p12" -k "$KEYCHAIN" -P "$P12PW" -A -T /usr/bin/codesign
     rm -rf "$TMP"
-    echo "Identity created (valid 10 years)."
+}
+
+# Collapse to EXACTLY ONE identity: if there isn't exactly one, purge every
+# duplicate cert by hash, then create a single fresh one.
+count="$(list_hashes | wc -l | tr -d ' ')"
+if [ "$count" != "1" ]; then
+    if [ "$count" != "0" ]; then
+        echo "Found $count '$IDENTITY' identities — collapsing to one..."
+        for h in $(list_hashes); do
+            security delete-certificate -Z "$h" "$KEYCHAIN" 2>/dev/null || true
+        done
+    fi
+    create_identity
 fi
 
-echo "Signing $APP ..."
-codesign --force --deep --sign "$IDENTITY" "$APP"
+HASH="$(list_hashes | head -1)"
+if [ -z "$HASH" ]; then
+    echo "Could not establish a signing identity: 'security import' likely failed" >&2
+    echo "(keychain locked, or OpenSSL p12 export rejected). The app stays ad-hoc" >&2
+    echo "signed — unlock your login keychain and re-run ./sign_mac.sh." >&2
+    exit 1
+fi
+
+echo "Signing $APP with $IDENTITY ($HASH)..."
+codesign --force --deep --sign "$HASH" "$APP"
 echo "Verifying signature:"
-codesign -dv "$APP" 2>&1 | grep -iE "Authority|Identifier|Signature" || true
+codesign -dvv "$APP" 2>&1 | grep -iE "Authority|Identifier|Signature" || true
 echo ""
-echo "Done. Grant Accessibility + Input Monitoring ONCE; it now persists across rebuilds."
+echo "Done. The signature is now stable across rebuilds."
+echo "First time after switching off ad-hoc: REMOVE any stale 'Human Typer' rows"
+echo "from System Settings > Privacy > Accessibility (and Input Monitoring), then"
+echo "re-grant once. From then on the grant persists across rebuilds & updates."

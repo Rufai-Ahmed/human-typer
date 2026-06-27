@@ -110,7 +110,10 @@ document.addEventListener('DOMContentLoaded', () => {
     async function checkAccess() {
         const d = await fetchPerms();
         setPermDots(d);
-        if (d.accessibility && d.input_monitoring) { showApp(); } else { showAccessGate(); }
+        // Accessibility is the only permission needed: it lets the app type AND
+        // powers the global Cmd+. stop (Accessibility is a superset that covers
+        // input monitoring). Input Monitoring is no longer required.
+        if (d.accessibility) { showApp(); } else { showAccessGate(); }
     }
 
     function showAccessGate() {
@@ -121,7 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
         accessPoll = setInterval(async () => {
             const d = await fetchPerms();
             setPermDots(d);
-            if (d.accessibility && d.input_monitoring) showApp();
+            if (d.accessibility) showApp();
         }, 1500);
     }
 

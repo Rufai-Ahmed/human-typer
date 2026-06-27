@@ -20,3 +20,5 @@ LICENSE_KEYS.txt
 
 # transient design working file
 .design-spec.md
+
+.venv/

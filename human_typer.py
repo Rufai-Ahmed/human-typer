@@ -186,10 +186,12 @@ typing_status.cancel_event = threading.Event()
 typing_status.pause_event = threading.Event()
 
 
-# --- Global Esc emergency stop ---------------------------------------------
+# --- Global emergency stop --------------------------------------------------
 _abort_listener = None
 _focus_listener = None
 _ESC_KEYCODE = 53  # macOS virtual keycode for Esc
+_event_tap_cb = None       # keep the ctypes tap callback alive (else it's GC'd → crash)
+_event_tap_port = [None]   # the live CFMachPort, so the callback can re-arm the tap
 
 
 def _frontmost_token():
@@ -279,7 +281,7 @@ def _hotkey_watcher() -> None:
     tick = 0
     while True:
         if typing_status.state == "idle" and (hotkey_enabled or clipwatch_enabled):
-            if hotkey_enabled:
+            if hotkey_enabled and not IS_MAC:   # macOS handles the chord via the CGEventTap
                 if _chord_down():
                     if armed:
                         armed = False
@@ -303,23 +305,79 @@ def _hotkey_watcher() -> None:
             time.sleep(0.25)
 
 
-def _macos_esc_poller() -> None:
-    """Poll the global Esc key state via CoreGraphics (thread-safe, no TSM).
+def _macos_event_tap() -> None:
+    """Global keyboard tap (Accessibility-gated) for the panic-stop and hotkey.
 
-    pynput's listener queries Text Services from its own thread, which crashes
-    inside a Cocoa app; polling CGEventSourceKeyState sidesteps that entirely.
+    Replaces CGEventSourceKeyState polling, which needed the separate Input Monitoring
+    permission AND could not see the Touch Bar Esc key (delivered as a system event,
+    not a normal keyDown). A listen-only CGEventTap on its own CFRunLoop catches:
+      * Cmd + .   -> stop  (a chord, so it fires on EVERY Mac incl. Touch Bar)
+      * Esc       -> stop  (only Macs with a physical Esc emit this globally)
+      * Cmd+Shift+H -> quick-type hotkey
+    Built on the CoreGraphics/CoreFoundation CDLLs the app already loads (no extra
+    PyInstaller deps). The callback only reads keycodes/flags and sets thread-safe
+    events — no Text Services calls — so it's safe off the main thread (pynput wasn't).
+    The tap needs Accessibility (a superset that also covers input monitoring); we
+    retry creating it until that's granted via the permission gate.
     """
-    while True:
-        if typing_status.state in ("countdown", "typing", "paused"):
-            try:
-                # Check both source states (combined session + HID) for reliability.
-                if cg.CGEventSourceKeyState(0, _ESC_KEYCODE) or cg.CGEventSourceKeyState(1, _ESC_KEYCODE):
+    global _event_tap_cb
+    PERIOD, H_KC = 47, 4
+    KEYCODE_FIELD = 9                 # kCGKeyboardEventKeycode
+    FLAG_SHIFT, FLAG_CMD = 0x20000, 0x100000
+    KEYDOWN = 10                      # kCGEventKeyDown
+    DISABLED = (0xFFFFFFFE, 0xFFFFFFFF)  # tap disabled by timeout / user input
+    MASK = 1 << KEYDOWN
+
+    CB = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32,
+                          ctypes.c_void_p, ctypes.c_void_p)
+
+    cg.CGEventTapCreate.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
+                                    ctypes.c_uint64, CB, ctypes.c_void_p]
+    cg.CGEventTapCreate.restype = ctypes.c_void_p
+    cg.CGEventTapEnable.argtypes = [ctypes.c_void_p, ctypes.c_bool]
+    cg.CGEventGetIntegerValueField.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    cg.CGEventGetIntegerValueField.restype = ctypes.c_int64
+    cg.CGEventGetFlags.argtypes = [ctypes.c_void_p]
+    cg.CGEventGetFlags.restype = ctypes.c_uint64
+    cf.CFMachPortCreateRunLoopSource.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long]
+    cf.CFMachPortCreateRunLoopSource.restype = ctypes.c_void_p
+    cf.CFRunLoopGetCurrent.restype = ctypes.c_void_p
+    cf.CFRunLoopAddSource.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    mode = ctypes.c_void_p.in_dll(cf, "kCFRunLoopDefaultMode")
+
+    def _cb(proxy, etype, event, refcon):
+        try:
+            if etype == KEYDOWN:
+                kc = cg.CGEventGetIntegerValueField(event, KEYCODE_FIELD)
+                flags = cg.CGEventGetFlags(event)
+                cmd = bool(flags & FLAG_CMD)
+                active = typing_status.state in ("countdown", "typing", "paused")
+                if active and (kc == _ESC_KEYCODE or (kc == PERIOD and cmd)):
                     typing_status.cancel_event.set()
-            except Exception:
-                pass
-            time.sleep(0.03)   # responsive while a run is active
-        else:
-            time.sleep(0.25)   # idle: barely wake the CPU when nothing's running
+                elif kc == H_KC and cmd and (flags & FLAG_SHIFT) and hotkey_enabled:
+                    _fire_quick_type()
+            elif etype in DISABLED and _event_tap_port[0]:
+                cg.CGEventTapEnable(_event_tap_port[0], True)   # system disabled us → re-arm
+        except Exception:
+            pass
+        return event
+
+    _event_tap_cb = CB(_cb)   # MUST stay referenced for the life of the tap
+
+    while True:
+        port = None
+        try:
+            # tap=kCGSessionEventTap(1), place=kCGHeadInsertEventTap(0), opt=listenOnly(1)
+            port = cg.CGEventTapCreate(1, 0, 1, MASK, _event_tap_cb, None)
+        except Exception:
+            port = None
+        if port:
+            _event_tap_port[0] = port
+            src = cf.CFMachPortCreateRunLoopSource(None, port, 0)
+            cf.CFRunLoopAddSource(cf.CFRunLoopGetCurrent(), src, mode)
+            cg.CGEventTapEnable(port, True)
+            cf.CFRunLoopRun()   # blocks this daemon thread, dispatching _cb
+        time.sleep(2.0)         # no Accessibility yet (or tap died) — retry until granted
 
 
 def start_global_abort_listener() -> bool:
@@ -338,9 +396,10 @@ def start_global_abort_listener() -> bool:
     if _abort_listener is not None:
         return False
 
-    # macOS: poll CoreGraphics key state (pynput's listener is unsafe here).
+    # macOS: a listen-only CGEventTap (pynput's listener is unsafe here, and key-state
+    # polling missed Touch Bar keys / needed Input Monitoring).
     if IS_MAC and HAS_COREGRAPHICS:
-        _abort_listener = threading.Thread(target=_macos_esc_poller, daemon=True)
+        _abort_listener = threading.Thread(target=_macos_event_tap, daemon=True)
         _abort_listener.start()
         return True
 
@@ -368,7 +427,7 @@ ACTIVATE_URL = os.environ.get(
 
 # Bump this on every release; the app compares it to the server's latest version
 # and shows a "Download update" banner when this build is behind.
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.6.1"
 VERSION_URL = os.environ.get(
     "HUMANTYPER_VERSION_URL", ACTIVATE_URL.rsplit("/api/", 1)[0] + "/api/version"
 )
@@ -1127,8 +1186,7 @@ def run_app(port=5000, force_browser=False):
     httpd, p = _bind_server(port)
     url = f"http://127.0.0.1:{p}"
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    start_global_abort_listener()
-    request_input_monitoring()   # register in the Privacy list so global Esc/hotkey can work
+    start_global_abort_listener()   # CGEventTap for the global stop runs on Accessibility
 
     if not force_browser:
         try:
