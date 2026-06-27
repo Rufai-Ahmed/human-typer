@@ -118,6 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     typosSlider.addEventListener('input', (e) => {
         typosValue.textContent = `${e.target.value}%`;
+        typosValue.classList.toggle('warn', parseFloat(e.target.value) > 5);
     });
 
     function syncHumanize() {
@@ -149,7 +150,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.text) {
                 textInput.value = data.text;
                 updateCounters();
-                btnClipboard.style.borderColor = 'var(--accent-green)';
+                btnClipboard.style.borderColor = 'var(--accent)';
                 setTimeout(() => { btnClipboard.style.borderColor = ''; }, 1000);
             }
         } catch (err) {
@@ -177,6 +178,7 @@ document.addEventListener('DOMContentLoaded', () => {
         overlayTitle.textContent = 'Get ready';
         overlayInstruction.textContent = 'Click into the target field now!';
         progressCircle.style.strokeDashoffset = '0';
+        progressBar.style.transform = 'scaleX(0)';
         overlayStats.classList.add('hidden');
         typingOverlay.classList.remove('hidden');
 
@@ -234,12 +236,12 @@ document.addEventListener('DOMContentLoaded', () => {
             else if (data.state === 'typing') {
                 overlayTitle.textContent = 'Typing…';
                 overlayInstruction.textContent = 'Keep the target window focused. Press Esc to stop.';
-                countdownTimer.textContent = '⌨️';
+                countdownTimer.textContent = '▸';
                 progressCircle.style.strokeDashoffset = '314';
                 overlayStats.classList.remove('hidden');
 
                 const percent = data.total_chars > 0 ? (data.typed_chars / data.total_chars) * 100 : 0;
-                progressBar.style.width = `${percent}%`;
+                progressBar.style.transform = `scaleX(${Math.max(0, Math.min(1, percent / 100))})`;
                 progressPercent.textContent = `${Math.round(percent)}%`;
                 progressCounts.textContent = `${data.typed_chars} / ${data.total_chars} chars`;
 
@@ -270,13 +272,13 @@ document.addEventListener('DOMContentLoaded', () => {
             pollInterval = null;
         }
         if (finalState === 'done') {
-            overlayTitle.textContent = 'Done 🎉';
+            overlayTitle.textContent = 'done';
             overlayInstruction.textContent = 'Everything typed successfully.';
-            progressBar.style.width = '100%';
+            progressBar.style.transform = 'scaleX(1)';
             progressPercent.textContent = '100%';
             countdownTimer.textContent = '✓';
         } else if (finalState === 'aborted') {
-            overlayTitle.textContent = 'Stopped 🛑';
+            overlayTitle.textContent = 'stopped';
             overlayInstruction.textContent = 'Typing halted.';
             countdownTimer.textContent = '✕';
         }

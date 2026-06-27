@@ -673,16 +673,11 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
-        if parsed.path == "/" or parsed.path == "/index.html":
-            self.serve_static("index.html", "text/html")
-        elif parsed.path == "/style.css":
-            self.serve_static("style.css", "text/css")
-        elif parsed.path == "/app.js":
-            self.serve_static("app.js", "application/javascript")
-        elif parsed.path == "/api/license":
+        path = parsed.path
+        if path == "/api/license":
             revalidate_online()   # drops the local record if the key was revoked/moved
             self.send_json({"activated": is_activated()})
-        elif parsed.path == "/api/status":
+        elif path == "/api/status":
             self.send_json({
                 "state": typing_status.state,
                 "total_chars": typing_status.total_chars,
@@ -700,6 +695,8 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(e)}, 500)
         elif parsed.path == "/api/update":
             self.send_json(check_update())
+        elif not path.startswith("/api/"):
+            self.serve_static_path(path)   # index.html, css, js, fonts/*.woff2, svg, ...
         else:
             self.send_error(404, "File Not Found")
 
@@ -777,18 +774,36 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get('Content-Length', 0))
         return self.rfile.read(content_length).decode('utf-8')
 
-    def serve_static(self, filename, content_type):
-        file_path = os.path.join(_resource_dir(), "gui", filename)
+    _STATIC_MIME = {
+        ".html": "text/html; charset=utf-8",
+        ".css": "text/css; charset=utf-8",
+        ".js": "application/javascript; charset=utf-8",
+        ".json": "application/json; charset=utf-8",
+        ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".otf": "font/otf",
+        ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".ico": "image/x-icon",
+    }
+
+    def serve_static_path(self, url_path):
+        """Serve any asset under gui/ (index.html, css, js, fonts/*.woff2, svg, ...)."""
+        rel = url_path.lstrip("/") or "index.html"
+        gui_dir = os.path.realpath(os.path.join(_resource_dir(), "gui"))
+        target = os.path.realpath(os.path.join(gui_dir, rel))
+        if target != gui_dir and not target.startswith(gui_dir + os.sep):
+            self.send_error(403, "Forbidden")   # path-traversal guard
+            return
+        ctype = self._STATIC_MIME.get(os.path.splitext(target)[1].lower(), "application/octet-stream")
         try:
-            with open(file_path, "rb") as f:
+            with open(target, "rb") as f:
                 content = f.read()
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(content)))
-            self.end_headers()
-            self.wfile.write(content)
-        except Exception:
-            self.send_error(404, f"File {filename} not found")
+        except OSError:
+            self.send_error(404, "Not Found")
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(content)))
+        self.end_headers()
+        self.wfile.write(content)
 
     def send_json(self, data, status=200):
         content = json.dumps(data).encode('utf-8')

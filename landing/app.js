@@ -11,6 +11,10 @@ document.getElementById('year').textContent = new Date().getFullYear();
         "Once upon a time, in a repo far, far away...",
         "Meeting notes: shipped the build, fixed the lag, next up...",
     ];
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        el.textContent = phrases[0];
+        return;
+    }
     let pi = 0, ci = 0, deleting = false;
 
     function tick() {

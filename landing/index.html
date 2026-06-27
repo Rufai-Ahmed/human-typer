@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Human Typer — Type anywhere, like a real person</title>
     <meta name="description" content="Human Typer auto-types your text into any app with real, human-feeling keystrokes. Native macOS & Windows app. One-time payment of ₦10,000 — yours forever, no subscription.">
-    <meta name="theme-color" content="#0b0b12">
+    <meta name="theme-color" content="#0a0c0d">
 
     <meta property="og:type" content="website">
     <meta property="og:title" content="Human Typer — Type anywhere, like a real person">
@@ -15,34 +15,34 @@
 
     <link rel="icon" href="/icon.png">
     <link rel="apple-touch-icon" href="/icon.png">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="ambient" aria-hidden="true"></div>
-
     <!-- Nav -->
     <header class="nav">
-        <a class="brand" href="#top">
-            <span class="brand-mark">⌨️</span>
-            <span class="brand-name">Human Typer</span>
-        </a>
-        <nav class="nav-links">
-            <a href="#features">Features</a>
-            <a href="#how">How it works</a>
-            <a href="#pricing">Pricing</a>
-            <a href="#faq">FAQ</a>
-            <a href="#pricing" class="btn btn-ghost nav-cta">Get it</a>
-        </nav>
+        <div class="nav-inner">
+            <a class="brand" href="#top">
+                <span class="tic">▸</span><span class="brand-name">human_typer</span>
+            </a>
+            <nav class="nav-links">
+                <a href="#features">features</a>
+                <a href="#how">how-it-works</a>
+                <a href="#pricing">pricing</a>
+                <a href="#faq">faq</a>
+                <a href="#pricing" class="btn btn-primary nav-cta">Get it</a>
+            </nav>
+        </div>
     </header>
 
     <main id="top">
         <!-- Hero -->
         <section class="hero">
-            <span class="pill">One-time ₦10,000 · yours forever · no subscription</span>
-            <h1 class="hero-title">Type anywhere,<br><span class="grad">like a real person.</span></h1>
+            <p class="hero-eyebrow">
+                <span class="prompt">~/typer $</span><span class="hero-caret">_</span>
+                <span class="sep">·</span>
+                <span class="label">Lifetime license</span>
+            </p>
+            <h1 class="hero-title">Type anywhere,<br><span class="hl-2">like a real person.</span></h1>
             <p class="hero-sub">
                 Human Typer types your text into <strong>any</strong> app with real, human-feeling
                 keystrokes — natural rhythm, lifelike pauses, your speed. Not a paste. Real keys.
@@ -51,15 +51,24 @@
                 <a href="#pricing" class="btn btn-primary btn-lg">Get it for ₦10,000 once</a>
                 <a href="#how" class="btn btn-ghost btn-lg">See how it works</a>
             </div>
+            <p class="hero-meta">
+                <span class="dot"></span> mac + windows
+                <span class="sep">·</span> <span class="num">10,000</span> NGN
+                <span class="sep">·</span> one-time
+            </p>
 
             <!-- App window mockup with a live typing demo -->
             <div class="mock">
                 <div class="mock-bar">
-                    <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
-                    <span class="mock-title">Human Typer</span>
+                    <span class="mock-brand"><span class="tic">▸</span> human_typer</span>
+                    <span class="mock-status"><span class="dot"></span> live</span>
+                    <span class="mock-winctl">_ □ ✕</span>
                 </div>
                 <div class="mock-body">
-                    <div class="mock-line"><span class="mock-label">Text</span></div>
+                    <div class="mock-head">
+                        <span class="eyebrow" style="margin:0"><span class="tic">▸</span> Text to type</span>
+                        <span class="path">~/buffer</span>
+                    </div>
                     <div class="mock-type"><span id="type-demo"></span><span class="caret">▍</span></div>
                     <div class="mock-controls">
                         <span class="chip">Speed · 120 ms</span>
@@ -72,36 +81,51 @@
 
         <!-- Features -->
         <section id="features" class="section">
-            <h2 class="section-title">Built to feel human</h2>
-            <p class="section-sub">Every keystroke is a real OS event — so it works in any app, and reads like a person at the keyboard.</p>
+            <div class="section-head">
+                <p class="eyebrow"><span class="tic">▸</span> Features</p>
+                <h2 class="section-title">Built to feel human</h2>
+                <p class="section-sub">Every keystroke is a real OS event — so it works in any app, and reads like a person at the keyboard.</p>
+            </div>
             <div class="grid">
                 <div class="card">
-                    <div class="card-ico">🎹</div>
+                    <span class="card-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.001"/><path d="M10 8h.001"/><path d="M14 8h.001"/><path d="M18 8h.001"/><path d="M8 12h.001"/><path d="M12 12h.001"/><path d="M16 12h.001"/><path d="M7 16h10"/></svg>
+                    </span>
                     <h3>Real keystrokes</h3>
                     <p>Sends genuine OS key events (not a clipboard paste), so it works in browsers, editors, chat — any text field.</p>
                 </div>
                 <div class="card">
-                    <div class="card-ico">🌊</div>
+                    <span class="card-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                    </span>
                     <h3>Human rhythm</h3>
                     <p>Variable timing, finger-travel flight time, pauses after punctuation, and the odd hesitation. Toggle off for constant speed.</p>
                 </div>
                 <div class="card">
-                    <div class="card-ico">⚡</div>
+                    <span class="card-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>
+                    </span>
                     <h3>Your speed</h3>
                     <p>From a relaxed 200 ms down to near-instant. Dial in exactly how fast you want it to type.</p>
                 </div>
                 <div class="card">
-                    <div class="card-ico">⌫</div>
+                    <span class="card-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10 5a2 2 0 0 0-1.344.519l-6.328 5.74a1 1 0 0 0 0 1.481l6.328 5.741A2 2 0 0 0 10 19h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z"/><path d="m12 9 6 6"/><path d="m18 9-6 6"/></svg>
+                    </span>
                     <h3>Lifelike typos</h3>
                     <p>Optional: it occasionally fat-fingers a nearby key, then backspaces and fixes it — just like you would.</p>
                 </div>
                 <div class="card">
-                    <div class="card-ico">🛑</div>
+                    <span class="card-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><rect width="6" height="6" x="9" y="9" rx="1"/></svg>
+                    </span>
                     <h3>Instant Esc stop</h3>
                     <p>Press <kbd>Esc</kbd> to halt immediately — even when another app is in front.</p>
                 </div>
                 <div class="card">
-                    <div class="card-ico">💻</div>
+                    <span class="card-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+                    </span>
                     <h3>Mac &amp; Windows</h3>
                     <p>A real native desktop window on both platforms. No browser tab, no account — just a one-time online activation.</p>
                 </div>
@@ -110,25 +134,28 @@
 
         <!-- How it works -->
         <section id="how" class="section">
-            <h2 class="section-title">Four steps</h2>
+            <div class="section-head">
+                <p class="eyebrow"><span class="tic">▸</span> How it works</p>
+                <h2 class="section-title">Four steps</h2>
+            </div>
             <div class="steps">
                 <div class="step">
-                    <span class="step-n">1</span>
+                    <span class="step-n">01</span>
                     <h3>Buy your key</h3>
                     <p>One payment of ₦10,000. Your license key is emailed to you.</p>
                 </div>
                 <div class="step">
-                    <span class="step-n">2</span>
+                    <span class="step-n">02</span>
                     <h3>Download &amp; activate</h3>
                     <p>Grab the free app, open it, and paste your key once. Done forever.</p>
                 </div>
                 <div class="step">
-                    <span class="step-n">3</span>
+                    <span class="step-n">03</span>
                     <h3>Paste your text</h3>
                     <p>Drop in what you want typed, set the speed, leave Humanize on.</p>
                 </div>
                 <div class="step">
-                    <span class="step-n">4</span>
+                    <span class="step-n">04</span>
                     <h3>Hit start</h3>
                     <p>Click into your target app during the countdown — it types for you. Esc stops it anytime.</p>
                 </div>
@@ -137,8 +164,11 @@
 
         <!-- Pricing -->
         <section id="pricing" class="section pricing">
-            <h2 class="section-title">One price. Forever.</h2>
-            <p class="section-sub">Others charge you every month. Human Typer is a single payment — pay once, own it for life.</p>
+            <div class="section-head">
+                <p class="eyebrow"><span class="tic">▸</span> Pricing</p>
+                <h2 class="section-title">One price. Forever.</h2>
+                <p class="section-sub">Others charge you every month. Human Typer is a single payment — pay once, own it for life.</p>
+            </div>
 
             <div class="price-card">
                 <div class="price-badge">Lifetime license</div>
@@ -160,6 +190,7 @@
         <!-- Download -->
         <section id="download" class="section download">
             <div class="dl-card">
+                <p class="eyebrow"><span class="tic">▸</span> Download</p>
                 <h2 class="section-title">Download</h2>
                 <p class="section-sub">Free to download — activate it with the license key from your purchase. <strong>Windows opens in one click;</strong> macOS needs a quick one-time approval (steps below).</p>
                 <div class="dl-buttons">
@@ -190,7 +221,10 @@
 
         <!-- FAQ -->
         <section id="faq" class="section">
-            <h2 class="section-title">FAQ</h2>
+            <div class="section-head">
+                <p class="eyebrow"><span class="tic">▸</span> FAQ</p>
+                <h2 class="section-title">FAQ</h2>
+            </div>
             <div class="faq">
                 <details>
                     <summary>How much is it, and is it really one-time?</summary>
@@ -226,15 +260,14 @@
 
     <footer class="footer">
         <div class="footer-brand">
-            <span class="brand-mark">⌨️</span>
-            <span class="brand-name">Human Typer</span>
+            <span class="tic">▸</span><span class="brand-name">human_typer</span>
         </div>
         <p class="footer-note">
             Made for legitimate keyboard automation — demos, accessibility, repetitive data entry, and UI testing.
             Please use it only where automation is permitted.
         </p>
         <p class="footer-small">
-            Support: <a href="mailto:me@rufaiahmed.com">me@rufaiahmed.com</a> · © <span id="year"></span> Human Typer
+            Support: <a href="mailto:me@rufaiahmed.com">me@rufaiahmed.com</a> · © <span id="year" class="num"></span> Human Typer
         </p>
     </footer>
 

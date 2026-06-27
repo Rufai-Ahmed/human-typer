@@ -4,21 +4,23 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Human Typer</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="glow-bg"></div>
-
     <!-- License Activation Gate -->
     <div id="license-gate" class="license-gate hidden">
         <div class="license-card">
-            <div class="overlay-glow"></div>
-            <span class="logo-icon big">⌨️</span>
+            <span class="logo-icon big" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="20" height="16" x="2" y="4" rx="2"/>
+                    <path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/>
+                    <path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/>
+                    <path d="M7 16h10"/>
+                </svg>
+            </span>
+            <p class="prompt-line"><span class="prompt">~/activate $</span><span class="caret">_</span></p>
             <h1 class="license-title">Activate Human Typer</h1>
-            <p class="license-sub">Enter the license key from your purchase email to unlock the app. One-time activation — yours forever.</p>
+            <p class="license-sub">Enter the license key from your purchase email to unlock the app. One-time activation, yours forever.</p>
             <input type="text" id="license-key-input" class="license-input" placeholder="HT-XXXXX-XXXXX-XXXXX" autocomplete="off" spellcheck="false">
             <button id="btn-activate" class="btn btn-primary license-btn">Activate</button>
             <p id="license-error" class="license-error hidden"></p>
@@ -30,30 +32,35 @@
     <div id="app-root" class="app-container hidden">
         <!-- Update banner (shown when a newer version is available) -->
         <div id="update-banner" class="update-banner hidden">
+            <span class="status-dot connected" aria-hidden="true"></span>
             <span id="update-text">A new version of Human Typer is available.</span>
-            <button id="update-btn" class="btn btn-update">Download update</button>
+            <button id="update-btn" class="btn btn-secondary btn-update">Download update</button>
         </div>
 
         <!-- Header -->
         <header class="app-header">
             <div class="logo-container">
-                <span class="logo-icon">⌨️</span>
-                <div class="logo-text">
-                    <h1>Human Typer</h1>
-                    <p class="subtitle">Types anywhere — like a real person at the keyboard.</p>
-                </div>
+                <span class="logo-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                        <rect width="20" height="16" x="2" y="4" rx="2"/>
+                        <path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/>
+                        <path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/>
+                        <path d="M7 16h10"/>
+                    </svg>
+                </span>
+                <h1 class="wordmark"><span class="prompt">&#9656;</span> human_typer</h1>
             </div>
-            <div class="connection-status">
-                <span class="status-dot connected"></span>
-                <span class="status-text">Licensed</span>
+            <div class="status-pill">
+                <span class="status-dot connected" aria-hidden="true"></span>
+                <span class="status-text">licensed</span>
             </div>
         </header>
 
         <!-- How it works -->
         <ol class="steps">
-            <li class="step"><span class="step-num">1</span><span class="step-text"><strong>Paste your text</strong> into the box below.</span></li>
+            <li class="step"><span class="step-num">1</span><span class="step-text"><strong>Paste your text</strong> into the buffer below.</span></li>
             <li class="step"><span class="step-num">2</span><span class="step-text"><strong>Set the speed</strong> and humanize options.</span></li>
-            <li class="step"><span class="step-num">3</span><span class="step-text"><strong>Hit Start</strong>, click your target app — typing begins after the countdown.</span></li>
+            <li class="step"><span class="step-num">3</span><span class="step-text"><strong>Hit Start</strong>, click your target app, typing begins after the countdown.</span></li>
         </ol>
 
         <!-- Main Workspace -->
@@ -61,7 +68,7 @@
             <!-- Left Column: Settings Panel -->
             <section class="panel settings-panel">
                 <div class="panel-header">
-                    <h2>Settings</h2>
+                    <h2 class="eyebrow"><span class="prompt">&#9656;</span> SETTINGS</h2>
                 </div>
 
                 <div class="control-group">
@@ -70,7 +77,7 @@
                         <span id="speed-value" class="control-value">100 ms</span>
                     </div>
                     <input type="range" id="speed" name="speed" min="2" max="200" value="100" step="1" class="slider">
-                    <span class="control-desc">Delay between keystrokes. Lower = faster (2 ms ≈ near-instant, 200 ms ≈ relaxed). For top speed, turn Humanize off.</span>
+                    <span class="control-desc">Delay between keystrokes. Lower = faster (2 ms is near-instant, 200 ms is relaxed). For top speed, turn Humanize off.</span>
                 </div>
 
                 <div class="control-group">
@@ -89,10 +96,13 @@
                         <span class="toggle-title">Humanize</span>
                         <span class="toggle-desc">Natural rhythm: variable timing, key-distance flight, pauses after punctuation, and small hesitations.</span>
                     </div>
-                    <label class="switch">
-                        <input type="checkbox" id="humanize" checked>
-                        <span class="slider-round"></span>
-                    </label>
+                    <div class="toggle-control">
+                        <label class="switch">
+                            <input type="checkbox" id="humanize" checked>
+                            <span class="slider-round"></span>
+                        </label>
+                        <span class="toggle-state" aria-hidden="true"></span>
+                    </div>
                 </div>
 
                 <div class="control-group" id="typo-group">
@@ -105,8 +115,13 @@
                 </div>
 
                 <div class="note">
-                    <span class="note-icon">⎋</span>
-                    <span>Press <kbd>Esc</kbd> anytime to stop instantly — even while another app is focused.</span>
+                    <span class="note-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"/>
+                            <path d="M12 16v-4"/><path d="M12 8h.01"/>
+                        </svg>
+                    </span>
+                    <span>Press <kbd class="keycap">esc</kbd> anytime to stop instantly, even while another app is focused.</span>
                 </div>
             </section>
 
@@ -114,9 +129,14 @@
             <div class="right-column">
                 <section class="panel input-panel">
                     <div class="panel-header">
-                        <h2>Text to Type</h2>
+                        <h2 class="eyebrow"><span class="prompt">&#9656;</span> TEXT TO TYPE</h2>
                         <button id="btn-clipboard" class="btn btn-secondary">
-                            <span>📋</span> Paste Clipboard
+                            <span class="icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect width="8" height="4" x="8" y="2" rx="1" ry="1"/>
+                                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                                </svg>
+                            </span> Paste Clipboard
                         </button>
                     </div>
 
@@ -130,18 +150,22 @@
 
                     <div class="action-bar">
                         <button id="btn-start" class="btn btn-primary">
-                            <span>⌨️</span> Start Typing
+                            <span class="icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                                    <polygon points="6 3 20 12 6 21 6 3"/>
+                                </svg>
+                            </span> Start Typing
                         </button>
                     </div>
                 </section>
 
                 <section class="panel sandbox-panel">
                     <div class="panel-header">
-                        <h2>Test Field</h2>
-                        <span class="panel-tag">Try it here</span>
+                        <h2 class="eyebrow"><span class="prompt">&#9656;</span> TEST FIELD</h2>
+                        <span class="panel-tag">try it here</span>
                     </div>
                     <div class="sandbox-container">
-                        <input type="text" id="sandbox-input" placeholder="Click here, hit Start, and watch it type — no app-switching needed.">
+                        <input type="text" id="sandbox-input" placeholder="Click here, hit Start, and watch it type, no app-switching needed.">
                         <p class="sandbox-desc">Use this to preview the feel before typing into a real app.</p>
                     </div>
                 </section>
@@ -152,10 +176,9 @@
     <!-- Active Typing Overlay -->
     <div id="typing-overlay" class="overlay hidden">
         <div class="overlay-card">
-            <div class="overlay-glow"></div>
             <div class="overlay-content">
                 <div class="countdown-circle">
-                    <svg>
+                    <svg viewBox="0 0 120 120">
                         <circle cx="60" cy="60" r="50"></circle>
                         <circle cx="60" cy="60" r="50" id="progress-circle"></circle>
                     </svg>
@@ -194,7 +217,11 @@
 
                 <div class="overlay-actions">
                     <button id="btn-abort" class="btn btn-danger">
-                        <span>🛑</span> Stop (Esc)
+                        <span class="icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                                <rect width="14" height="14" x="5" y="5" rx="2"/>
+                            </svg>
+                        </span> Stop <kbd class="keycap">esc</kbd>
                     </button>
                 </div>
             </div>

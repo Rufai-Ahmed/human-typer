@@ -17,3 +17,6 @@ LICENSE_KEYS.txt
 # Local secrets for seeding (Supabase service_role etc.) — never commit.
 .env
 .env.*
+
+# transient design working file
+.design-spec.md
