@@ -405,6 +405,25 @@ body{
 .stealth-meter.bad .stealth-dot{ background:var(--danger-400); }
 .stealth-meter.bad .stealth-level{ color:var(--danger-400); }
 
+/* Queue */
+.queue-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:var(--s-2); }
+.queue-item{
+  display:flex; align-items:center; gap:var(--s-2);
+  background:var(--surface-2); border:var(--bw-thin) solid var(--border);
+  border-radius:var(--r-input); padding:var(--s-2) var(--s-3); font-size:var(--text-sm);
+}
+.queue-text{ flex:1; font-family:var(--font-mono); color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.queue-del{ background:none; border:none; color:var(--text-subtle); cursor:pointer; font-size:var(--text-sm); padding:0 4px; }
+.queue-del:hover{ color:var(--danger-400); }
+.queue-foot{ display:flex; align-items:center; gap:var(--s-3); margin-top:var(--s-1); flex-wrap:wrap; }
+.queue-sched{ font-size:var(--text-sm); color:var(--text-muted); display:flex; align-items:center; gap:var(--s-2); }
+.queue-min{
+  width:64px; font-family:var(--font-mono); font-variant-numeric:var(--num);
+  background:var(--surface-2); border:var(--bw-thin) solid var(--border);
+  border-radius:var(--r-input); color:var(--text); padding:4px 8px;
+}
+.queue-min:focus-visible{ outline:var(--bw-thick) solid var(--ring); outline-offset:2px; }
+
 /* ============================================================
    CONTROLS / SLIDERS
    ============================================================ */

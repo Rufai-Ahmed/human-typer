@@ -34,6 +34,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const stealthWpm = document.getElementById('stealth-wpm');
     const stealthTip = document.getElementById('stealth-tip');
 
+    // --- Queue ---
+    const btnAddQueue = document.getElementById('btn-add-queue');
+    const btnRunQueue = document.getElementById('btn-run-queue');
+    const queueList = document.getElementById('queue-list');
+    const queueEmpty = document.getElementById('queue-empty');
+    const queueDelayMin = document.getElementById('queue-delay-min');
+
     // --- Text + actions ---
     const textInput = document.getElementById('text-input');
     const charCount = document.getElementById('char-count');
@@ -355,54 +362,103 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // ============================ Start Typing ============================
-    btnStart.addEventListener('click', async () => {
-        const text = textInput.value;
-        if (!text.trim()) {
-            alert('Please enter some text to type first.');
-            return;
-        }
-        sandboxMode = false;
+    let runResolve = null;
+    function finishRun(state) { if (runResolve) { const r = runResolve; runResolve = null; r(state || 'done'); } }
 
-        const delay_ms = parseFloat(speedSlider.value);
-        const delay = parseFloat(delaySlider.value);
-        const humanize = humanizeCheckbox.checked;
-        const typos = humanize ? parseFloat(typosSlider.value) / 100.0 : 0.0;
-        originalCountdown = delay;
-
-        if (pollInterval) clearInterval(pollInterval);
-
-        countdownTimer.textContent = Math.ceil(delay);
-        overlayTitle.textContent = 'Get ready';
-        overlayInstruction.textContent = 'Click into the target field now!';
-        progressCircle.style.strokeDashoffset = '0';
-        progressBar.style.transform = 'scaleX(0)';
-        overlayStats.classList.add('hidden');
-        btnPause.classList.add('hidden');
-        btnResume.classList.add('hidden');
-        typingOverlay.classList.remove('hidden');
-
-        try {
-            const response = await fetch('/api/type', {
+    // Runs one document end-to-end; resolves with the final state ('done'/'aborted'/'error').
+    function beginTyping(rawText) {
+        return new Promise((resolve) => {
+            runResolve = resolve;
+            sandboxMode = false;
+            const delay_ms = parseFloat(speedSlider.value);
+            const delay = parseFloat(delaySlider.value);
+            const humanize = humanizeCheckbox.checked;
+            const typos = humanize ? parseFloat(typosSlider.value) / 100.0 : 0.0;
+            originalCountdown = delay;
+            if (pollInterval) clearInterval(pollInterval);
+            countdownTimer.textContent = Math.ceil(delay);
+            overlayTitle.textContent = 'Get ready';
+            overlayInstruction.textContent = 'Click into the target field now!';
+            progressCircle.style.strokeDashoffset = '0';
+            progressBar.style.transform = 'scaleX(0)';
+            overlayStats.classList.add('hidden');
+            btnPause.classList.add('hidden');
+            btnResume.classList.add('hidden');
+            typingOverlay.classList.remove('hidden');
+            const text = formModeCheckbox.checked ? rawText.replace(/\r?\n/g, '\t') : rawText;
+            fetch('/api/type', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: (formModeCheckbox.checked ? text.replace(/\r?\n/g, '\t') : text),
-                    delay_ms, humanize, typos, delay,
+                body: JSON.stringify({ text, delay_ms, humanize, typos, delay,
                     variance: advanced.variance, word_pause: advanced.word_pause,
                     sentence_pause: advanced.sentence_pause, hesitation_prob: advanced.hesitation_prob,
-                    hesitation: advanced.hesitation })
-            });
-            const data = await response.json();
-            if (response.ok) {
-                pollInterval = setInterval(pollStatus, 150);
-            } else {
-                alert(data.error || 'Failed to start typing.');
-                typingOverlay.classList.add('hidden');
-            }
-        } catch (err) {
-            alert('Error connecting to the typing engine.');
-            typingOverlay.classList.add('hidden');
-        }
+                    hesitation: advanced.hesitation }),
+            }).then((r) => r.json().then((data) => ({ ok: r.ok, data })))
+              .then(({ ok, data }) => {
+                  if (ok) { pollInterval = setInterval(pollStatus, 150); }
+                  else { alert(data.error || 'Failed to start typing.'); typingOverlay.classList.add('hidden'); finishRun('error'); }
+              })
+              .catch(() => { alert('Error connecting to the typing engine.'); typingOverlay.classList.add('hidden'); finishRun('error'); });
+        });
+    }
+
+    btnStart.addEventListener('click', () => {
+        const text = textInput.value;
+        if (!text.trim()) { alert('Please enter some text to type first.'); return; }
+        beginTyping(text);
     });
+
+    // ============================ Queue (sequential + scheduled) ============================
+    let queue = [];
+    let queueRunning = false;
+
+    function renderQueue() {
+        queueList.innerHTML = '';
+        queue.forEach((item, i) => {
+            const li = document.createElement('li'); li.className = 'queue-item';
+            const txt = document.createElement('span'); txt.className = 'queue-text';
+            txt.textContent = item.replace(/\s+/g, ' ').trim().slice(0, 60) || '(empty)';
+            const del = document.createElement('button'); del.className = 'queue-del'; del.type = 'button'; del.textContent = '✕';
+            del.addEventListener('click', () => { queue.splice(i, 1); renderQueue(); });
+            li.appendChild(txt); li.appendChild(del); queueList.appendChild(li);
+        });
+        btnRunQueue.classList.toggle('hidden', queue.length === 0 || queueRunning);
+        queueEmpty.textContent = queue.length
+            ? `${queue.length} item${queue.length > 1 ? 's' : ''} queued.`
+            : 'Stack documents to type one after another.';
+    }
+
+    btnAddQueue.addEventListener('click', () => {
+        const t = textInput.value;
+        if (!t.trim()) { alert('Type something in the buffer first, then add it to the queue.'); return; }
+        queue.push(t); renderQueue();
+    });
+
+    btnRunQueue.addEventListener('click', async () => {
+        if (queueRunning || !queue.length) return;
+        const mins = Math.max(0, parseFloat(queueDelayMin.value) || 0);
+        queueRunning = true; renderQueue();
+        if (mins > 0) {
+            let secs = Math.round(mins * 60);
+            await new Promise((resolve) => {
+                queueEmpty.textContent = `Starting in ${secs}s...`;
+                const iv = setInterval(() => {
+                    secs -= 1;
+                    if (secs <= 0 || !queueRunning) { clearInterval(iv); resolve(); return; }
+                    queueEmpty.textContent = `Starting in ${secs}s...`;
+                }, 1000);
+            });
+        }
+        const items = queue.slice();
+        for (const item of items) {
+            if (!queueRunning) break;
+            const st = await beginTyping(item);
+            if (st === 'aborted' || st === 'error') break;
+        }
+        queue = []; queueRunning = false; renderQueue();
+    });
+
+    renderQueue();
 
     // ============================ Test Field (in-window preview) ============================
     // Types into the in-window field WITHOUT the full-screen overlay, so the field
@@ -567,7 +623,7 @@ document.addEventListener('DOMContentLoaded', () => {
             overlayInstruction.textContent = 'Typing halted.';
             countdownTimer.textContent = '✕';
         }
-        setTimeout(() => { typingOverlay.classList.add('hidden'); }, 1600);
+        setTimeout(() => { typingOverlay.classList.add('hidden'); finishRun(finalState); }, 1600);
     }
 
     // ============================ Update check ============================

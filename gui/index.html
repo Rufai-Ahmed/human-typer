@@ -235,6 +235,21 @@
                         <p class="sandbox-desc">Types the text from the buffer above into this field, so you can preview the feel before a real app.</p>
                     </div>
                 </section>
+
+                <section class="panel queue-panel">
+                    <div class="panel-header">
+                        <h2 class="eyebrow"><span class="prompt">&#9656;</span> QUEUE</h2>
+                        <span class="profile-actions">
+                            <button id="btn-add-queue" class="btn btn-secondary btn-sm">Add buffer</button>
+                            <button id="btn-run-queue" class="btn btn-primary btn-sm hidden">Run queue</button>
+                        </span>
+                    </div>
+                    <ul id="queue-list" class="queue-list"></ul>
+                    <div class="queue-foot">
+                        <label class="queue-sched">Start in <input id="queue-delay-min" type="number" min="0" max="120" value="0" class="queue-min"> min</label>
+                        <span id="queue-empty" class="control-desc">Stack documents to type one after another.</span>
+                    </div>
+                </section>
             </div>
         </main>
     </div>
