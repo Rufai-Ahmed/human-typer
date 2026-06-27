@@ -36,6 +36,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const sandboxStatusText = document.getElementById('sandbox-status-text');
     const btnTestStop = document.getElementById('btn-test-stop');
 
+    // --- Pause / Resume ---
+    const btnPause = document.getElementById('btn-pause');
+    const btnResume = document.getElementById('btn-resume');
+
     // --- Overlay ---
     const typingOverlay = document.getElementById('typing-overlay');
     const countdownTimer = document.getElementById('countdown-timer');
@@ -227,6 +231,8 @@ document.addEventListener('DOMContentLoaded', () => {
         progressCircle.style.strokeDashoffset = '0';
         progressBar.style.transform = 'scaleX(0)';
         overlayStats.classList.add('hidden');
+        btnPause.classList.add('hidden');
+        btnResume.classList.add('hidden');
         typingOverlay.classList.remove('hidden');
 
         try {
@@ -268,7 +274,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch('/api/type', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text, delay_ms, humanize, typos, delay: 1 })
+                body: JSON.stringify({ text, delay_ms, humanize, typos, delay: 1, focus_guard: false })
             });
             const data = await res.json();
             if (res.ok) {
@@ -304,6 +310,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     btnAbort.addEventListener('click', abort);
+    if (btnPause) btnPause.addEventListener('click', () => fetch('/api/pause', { method: 'POST' }));
+    if (btnResume) btnResume.addEventListener('click', () => fetch('/api/resume', { method: 'POST' }));
 
     // In-window Esc fallback (the engine also listens globally via the OS).
     document.addEventListener('keydown', (e) => {
@@ -340,11 +348,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 overlayTitle.textContent = 'Get ready';
                 overlayInstruction.textContent = 'Click into the target field now!';
                 overlayStats.classList.add('hidden');
+                btnPause.classList.add('hidden');
+                btnResume.classList.add('hidden');
             }
             else if (data.state === 'typing') {
                 overlayTitle.textContent = 'Typing…';
                 overlayInstruction.textContent = 'Keep the target window focused. Press Esc to stop.';
                 countdownTimer.textContent = '▸';
+                btnPause.classList.remove('hidden');
+                btnResume.classList.add('hidden');
                 progressCircle.style.strokeDashoffset = '314';
                 overlayStats.classList.remove('hidden');
 
@@ -363,6 +375,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 else if (currentChar === ' ') currentChar = '␣ Space';
                 statChar.textContent = currentChar || 'None';
             }
+            else if (data.state === 'paused') {
+                overlayTitle.textContent = 'Paused';
+                overlayInstruction.textContent = data.pause_reason === 'focus'
+                    ? 'You switched away from your target window. Click back into it, then Resume.'
+                    : 'Paused. Resume when you are ready.';
+                btnPause.classList.add('hidden');
+                btnResume.classList.remove('hidden');
+            }
             else if (data.state === 'done') {
                 cleanup('done');
             }
@@ -379,6 +399,8 @@ document.addEventListener('DOMContentLoaded', () => {
             clearInterval(pollInterval);
             pollInterval = null;
         }
+        btnPause.classList.add('hidden');
+        btnResume.classList.add('hidden');
         if (finalState === 'done') {
             overlayTitle.textContent = 'done';
             overlayInstruction.textContent = 'Everything typed successfully.';

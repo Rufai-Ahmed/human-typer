@@ -580,7 +580,7 @@ body{
 .action-bar{ display:flex; justify-content:flex-end; }
 
 #btn-start{ width:100%; padding:14px; font-size:var(--text-base); }
-#btn-abort{ width:100%; padding:12px; }
+#btn-abort{ flex:1; padding:12px; }
 
 /* ============================================================
    NOTE + KEYCAP
@@ -760,7 +760,8 @@ body{
   white-space:nowrap;
 }
 
-.overlay-actions{ width:100%; margin-top:var(--s-2); }
+.overlay-actions{ width:100%; margin-top:var(--s-2); display:flex; gap:var(--s-2); }
+.overlay-actions #btn-pause, .overlay-actions #btn-resume{ flex:1; padding:12px; }
 #btn-abort .keycap{ margin-left:var(--s-1); }
 
 /* ============================================================

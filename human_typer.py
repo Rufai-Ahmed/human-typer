@@ -167,7 +167,7 @@ class TypingProfile:
 # Thread-safe global typing state for the GUI backend.
 @dataclass
 class TypingState:
-    state: str = "idle"         # "idle", "countdown", "typing", "done", "aborted"
+    state: str = "idle"         # "idle", "countdown", "typing", "paused", "done", "aborted"
     text: str = ""
     total_chars: int = 0
     typed_chars: int = 0
@@ -176,14 +176,48 @@ class TypingState:
     effective_wpm: float = 0.0
     countdown_remaining: float = 0.0
     cancel_event: threading.Event = None
+    pause_event: threading.Event = None
+    pause_reason: str = ""       # "manual" or "focus" while paused
+    focus_guard: bool = True     # auto-pause if the frontmost app changes mid-run
+    focus_target: object = None  # token for the app focused when typing began
 
 typing_status = TypingState()
 typing_status.cancel_event = threading.Event()
+typing_status.pause_event = threading.Event()
 
 
 # --- Global Esc emergency stop ---------------------------------------------
 _abort_listener = None
+_focus_listener = None
 _ESC_KEYCODE = 53  # macOS virtual keycode for Esc
+
+
+def _frontmost_token():
+    """A comparable token for the frontmost app/window (None = unknown, fail-open)."""
+    try:
+        if IS_MAC:
+            out = subprocess.run(["lsappinfo", "front"], capture_output=True,
+                                 text=True, timeout=1).stdout.strip()
+            return out or None
+        if sys.platform.startswith("win"):
+            return int(ctypes.windll.user32.GetForegroundWindow())
+    except Exception:
+        return None
+    return None
+
+
+def _focus_watcher() -> None:
+    """Auto-pause a run if the user switches away from their target window."""
+    while True:
+        s = typing_status
+        if s.state == "typing" and s.focus_guard and s.focus_target is not None:
+            tok = _frontmost_token()
+            if tok is not None and tok != s.focus_target and not s.pause_event.is_set():
+                s.pause_reason = "focus"
+                s.pause_event.set()
+            time.sleep(0.45)
+        else:
+            time.sleep(0.3)
 
 
 def _macos_esc_poller() -> None:
@@ -211,7 +245,10 @@ def start_global_abort_listener() -> bool:
     Mirrors goghostwriter's emergency stop: pressing Esc while a countdown or
     typing run is active cancels it, even when another window has focus.
     """
-    global _abort_listener
+    global _abort_listener, _focus_listener
+    if _focus_listener is None:
+        _focus_listener = threading.Thread(target=_focus_watcher, daemon=True)
+        _focus_listener.start()
     if _abort_listener is not None:
         return False
 
@@ -574,6 +611,9 @@ def type_text(text: str, profile: TypingProfile, countdown: float, is_gui: bool 
         typing_status.effective_wpm = 0.0
         typing_status.countdown_remaining = countdown
         typing_status.cancel_event.clear()
+        typing_status.pause_event.clear()
+        typing_status.pause_reason = ""
+        typing_status.focus_target = None
 
     if countdown > 0:
         if not is_gui:
@@ -603,11 +643,19 @@ def type_text(text: str, profile: TypingProfile, countdown: float, is_gui: bool 
     if is_gui:
         typing_status.state = "typing"
         typing_status.countdown_remaining = 0.0
+        if typing_status.focus_guard:
+            typing_status.focus_target = _frontmost_token()
 
     start = time.perf_counter()
     prev = ""
     for idx, ch in enumerate(text):
         if is_gui:
+            # Pause: block here while paused, until resumed or cancelled.
+            while typing_status.pause_event.is_set() and not typing_status.cancel_event.is_set():
+                typing_status.state = "paused"
+                time.sleep(0.08)
+            if typing_status.state == "paused" and not typing_status.cancel_event.is_set():
+                typing_status.state = "typing"
             if typing_status.cancel_event.is_set():
                 typing_status.state = "aborted"
                 return
@@ -704,7 +752,8 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
                 "current_char": typing_status.current_char,
                 "elapsed_time": round(typing_status.elapsed_time, 2),
                 "effective_wpm": round(typing_status.effective_wpm, 1),
-                "countdown_remaining": round(typing_status.countdown_remaining, 1)
+                "countdown_remaining": round(typing_status.countdown_remaining, 1),
+                "pause_reason": typing_status.pause_reason,
             })
         elif parsed.path == "/api/clipboard":
             try:
@@ -744,26 +793,32 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
                 params = json.loads(body)
                 text = params.get("text", "")
                 humanize = bool(params.get("humanize", True))
-                delay_ms = float(params.get("delay_ms", 100.0))
-                variance = float(params.get("variance", 0.35))
-                typo_prob = float(params.get("typos", 0.0))
                 delay = float(params.get("delay", 5.0))
+                focus_guard = bool(params.get("focus_guard", True))
 
                 if not text:
                     self.send_json({"error": "Empty text"}, 400)
                     return
 
-                if typing_status.state in ("countdown", "typing"):
+                if typing_status.state in ("countdown", "typing", "paused"):
                     self.send_json({"error": "Already typing"}, 400)
                     return
 
+                # Forward the full humanize parameter set (Personas drive all of these).
+                _d = TypingProfile()
                 profile = TypingProfile(
-                    delay_ms=delay_ms,
+                    delay_ms=float(params.get("delay_ms", _d.delay_ms)),
                     humanize=humanize,
-                    variance=variance if humanize else 0.0,
-                    typo_prob=typo_prob if humanize else 0.0,
-                    pauses=humanize,
+                    variance=(float(params.get("variance", _d.variance)) if humanize else 0.0),
+                    min_delay=float(params.get("min_delay", _d.min_delay)),
+                    word_pause=float(params.get("word_pause", _d.word_pause)),
+                    sentence_pause=float(params.get("sentence_pause", _d.sentence_pause)),
+                    hesitation_prob=float(params.get("hesitation_prob", _d.hesitation_prob)),
+                    hesitation=float(params.get("hesitation", _d.hesitation)),
+                    typo_prob=(float(params.get("typos", _d.typo_prob)) if humanize else 0.0),
+                    pauses=bool(params.get("pauses", humanize)),
                 )
+                typing_status.focus_guard = focus_guard
 
                 t = threading.Thread(
                     target=type_text,
@@ -779,6 +834,19 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/abort":
             typing_status.cancel_event.set()
             self.send_json({"status": "abort_requested"})
+
+        elif parsed.path == "/api/pause":
+            if typing_status.state in ("typing", "countdown"):
+                typing_status.pause_reason = "manual"
+                typing_status.pause_event.set()
+            self.send_json({"ok": True})
+
+        elif parsed.path == "/api/resume":
+            typing_status.pause_event.clear()
+            typing_status.pause_reason = ""
+            if typing_status.focus_guard:
+                typing_status.focus_target = _frontmost_token()  # re-lock to current front
+            self.send_json({"ok": True})
 
         elif parsed.path == "/api/open-download":
             body = self._read_body()
