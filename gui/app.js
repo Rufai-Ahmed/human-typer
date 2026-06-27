@@ -21,6 +21,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const typosSlider = document.getElementById('typos');
     const typosValue = document.getElementById('typos-value');
 
+    // --- Profiles / Personas ---
+    const profileSelect = document.getElementById('profile-select');
+    const btnSaveProfile = document.getElementById('btn-save-profile');
+    const btnDelProfile = document.getElementById('btn-del-profile');
+    const profileName = document.getElementById('profile-name');
+
     // --- Text + actions ---
     const textInput = document.getElementById('text-input');
     const charCount = document.getElementById('char-count');
@@ -183,6 +189,106 @@ document.addEventListener('DOMContentLoaded', () => {
     humanizeCheckbox.addEventListener('change', syncHumanize);
     syncHumanize();
 
+    // ============================ Profiles / Personas ============================
+    let advanced = { variance: 0.35, word_pause: 0.06, sentence_pause: 0.30, hesitation_prob: 0.015, hesitation: 0.7 };
+    let savedProfiles = {};
+    const PRESETS = {
+        'Default':              { delay_ms:100, delay:5, humanize:true, typos:0,   variance:0.35, word_pause:0.06, sentence_pause:0.30, hesitation_prob:0.015, hesitation:0.7 },
+        'Careful essay writer': { delay_ms:140, delay:5, humanize:true, typos:2,   variance:0.45, word_pause:0.12, sentence_pause:0.65, hesitation_prob:0.05,  hesitation:1.3 },
+        'Fast coder':           { delay_ms:45,  delay:3, humanize:true, typos:1,   variance:0.25, word_pause:0.03, sentence_pause:0.15, hesitation_prob:0.01,  hesitation:0.4 },
+        'Tired late-night':     { delay_ms:130, delay:5, humanize:true, typos:4,   variance:0.55, word_pause:0.10, sentence_pause:0.55, hesitation_prob:0.07,  hesitation:1.5 },
+        'Cautious form-filler': { delay_ms:110, delay:4, humanize:true, typos:0.5, variance:0.30, word_pause:0.05, sentence_pause:0.25, hesitation_prob:0.02,  hesitation:0.8 },
+    };
+
+    function applyProfile(s) {
+        speedSlider.value = s.delay_ms; speedValue.textContent = `${s.delay_ms} ms`;
+        delaySlider.value = s.delay; delayValue.textContent = `${s.delay}s`;
+        humanizeCheckbox.checked = !!s.humanize; syncHumanize();
+        typosSlider.value = s.typos; typosValue.textContent = `${s.typos}%`;
+        typosValue.classList.toggle('warn', parseFloat(s.typos) > 5);
+        advanced = {
+            variance: s.variance, word_pause: s.word_pause, sentence_pause: s.sentence_pause,
+            hesitation_prob: s.hesitation_prob, hesitation: s.hesitation,
+        };
+    }
+
+    function currentSettings() {
+        return {
+            delay_ms: parseFloat(speedSlider.value), delay: parseFloat(delaySlider.value),
+            humanize: humanizeCheckbox.checked, typos: parseFloat(typosSlider.value),
+            variance: advanced.variance, word_pause: advanced.word_pause,
+            sentence_pause: advanced.sentence_pause, hesitation_prob: advanced.hesitation_prob,
+            hesitation: advanced.hesitation,
+        };
+    }
+
+    function populateProfiles() {
+        profileSelect.innerHTML = '';
+        const og1 = document.createElement('optgroup'); og1.label = 'Presets';
+        Object.keys(PRESETS).forEach((n) => {
+            const o = document.createElement('option'); o.value = 'preset:' + n; o.textContent = n; og1.appendChild(o);
+        });
+        profileSelect.appendChild(og1);
+        const names = Object.keys(savedProfiles);
+        if (names.length) {
+            const og2 = document.createElement('optgroup'); og2.label = 'Saved';
+            names.forEach((n) => {
+                const o = document.createElement('option'); o.value = 'saved:' + n; o.textContent = n; og2.appendChild(o);
+            });
+            profileSelect.appendChild(og2);
+        }
+    }
+
+    async function loadProfiles() {
+        try { const r = await fetch('/api/profiles'); const d = await r.json(); savedProfiles = d.profiles || {}; }
+        catch (e) { savedProfiles = {}; }
+        populateProfiles();
+        profileSelect.value = 'preset:Default';
+    }
+
+    profileSelect.addEventListener('change', () => {
+        const v = profileSelect.value, i = v.indexOf(':');
+        const kind = v.slice(0, i), name = v.slice(i + 1);
+        const s = kind === 'preset' ? PRESETS[name] : savedProfiles[name];
+        if (s) applyProfile(s);
+        btnDelProfile.classList.toggle('hidden', kind !== 'saved');
+    });
+
+    btnSaveProfile.addEventListener('click', () => {
+        profileName.classList.remove('hidden'); profileName.value = ''; profileName.focus();
+    });
+
+    profileName.addEventListener('keydown', async (e) => {
+        if (e.key === 'Escape') { profileName.classList.add('hidden'); return; }
+        if (e.key !== 'Enter') return;
+        const name = profileName.value.trim();
+        profileName.classList.add('hidden');
+        if (!name) return;
+        try {
+            const r = await fetch('/api/profiles/save', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, settings: currentSettings() }),
+            });
+            const d = await r.json(); savedProfiles = d.profiles || savedProfiles;
+            populateProfiles(); profileSelect.value = 'saved:' + name; btnDelProfile.classList.remove('hidden');
+        } catch (_) { /* ignore */ }
+    });
+
+    btnDelProfile.addEventListener('click', async () => {
+        const v = profileSelect.value;
+        if (!v.startsWith('saved:')) return;
+        const name = v.slice('saved:'.length);
+        try {
+            const r = await fetch('/api/profiles/delete', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name }),
+            });
+            const d = await r.json(); savedProfiles = d.profiles || {};
+        } catch (_) { /* ignore */ }
+        populateProfiles(); profileSelect.value = 'preset:Default'; applyProfile(PRESETS['Default']);
+        btnDelProfile.classList.add('hidden');
+    });
+
     // ============================ Counters ============================
     function updateCounters() {
         const text = textInput.value;
@@ -239,7 +345,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch('/api/type', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text, delay_ms, humanize, typos, delay })
+                body: JSON.stringify({ text, delay_ms, humanize, typos, delay,
+                    variance: advanced.variance, word_pause: advanced.word_pause,
+                    sentence_pause: advanced.sentence_pause, hesitation_prob: advanced.hesitation_prob,
+                    hesitation: advanced.hesitation })
             });
             const data = await response.json();
             if (response.ok) {
@@ -274,7 +383,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch('/api/type', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text, delay_ms, humanize, typos, delay: 1, focus_guard: false })
+                body: JSON.stringify({ text, delay_ms, humanize, typos, delay: 1, focus_guard: false,
+                    variance: advanced.variance, word_pause: advanced.word_pause,
+                    sentence_pause: advanced.sentence_pause, hesitation_prob: advanced.hesitation_prob,
+                    hesitation: advanced.hesitation })
             });
             const data = await res.json();
             if (res.ok) {
@@ -437,6 +549,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ============================ Init ============================
     updateCounters();
+    loadProfiles();
     checkLicense();
     checkForUpdate();
 });

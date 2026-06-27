@@ -95,6 +95,19 @@
 
                 <div class="control-group">
                     <div class="control-label">
+                        <label for="profile-select">Profile</label>
+                        <span class="profile-actions">
+                            <button id="btn-save-profile" class="btn btn-secondary btn-sm">Save</button>
+                            <button id="btn-del-profile" class="btn btn-secondary btn-sm hidden">Delete</button>
+                        </span>
+                    </div>
+                    <select id="profile-select" class="profile-select"></select>
+                    <input id="profile-name" class="profile-name hidden" type="text" placeholder="Name this profile, then press Enter" maxlength="60" spellcheck="false">
+                    <span class="control-desc">Presets and your saved fingerprints. Picking one sets every option below.</span>
+                </div>
+
+                <div class="control-group">
+                    <div class="control-label">
                         <label for="speed">Typing Speed</label>
                         <span id="speed-value" class="control-value">100 ms</span>
                     </div>

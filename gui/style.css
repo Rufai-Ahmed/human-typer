@@ -371,6 +371,21 @@ body{
 .divider{ height:1px; background:var(--border); margin:0; }
 .control-value.warn{ color:var(--warning-400); }
 
+/* Profiles / Personas */
+.profile-actions{ display:flex; gap:var(--s-2); }
+.profile-select, .profile-name{
+  width:100%;
+  font-size:var(--text-base);
+  color:var(--text);
+  background:var(--surface-2);
+  border:var(--bw-thin) solid var(--border);
+  border-radius:var(--r-input);
+  padding:8px 10px;
+}
+.profile-select{ font-family:var(--font-body); }
+.profile-name{ font-family:var(--font-mono); margin-top:var(--s-2); }
+.profile-select:focus-visible, .profile-name:focus-visible{ outline:var(--bw-thick) solid var(--ring); outline-offset:2px; }
+
 /* ============================================================
    CONTROLS / SLIDERS
    ============================================================ */

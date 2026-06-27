@@ -300,6 +300,28 @@ def _config_dir() -> str:
     return path
 
 
+def _profiles_file() -> str:
+    return os.path.join(_config_dir(), "profiles.json")
+
+
+def load_user_profiles() -> dict:
+    """User-saved typing profiles ({name: settings}); empty dict on any error."""
+    try:
+        with open(_profiles_file(), "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_user_profiles(profs: dict) -> None:
+    try:
+        with open(_profiles_file(), "w", encoding="utf-8") as fh:
+            json.dump(profs, fh)
+    except Exception:
+        pass
+
+
 def _activation_file() -> str:
     return os.path.join(_config_dir(), "activation.json")
 
@@ -765,6 +787,8 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
             self.send_json(check_update())
         elif parsed.path == "/api/permissions":
             self.send_json({"accessibility": accessibility_ok()})
+        elif parsed.path == "/api/profiles":
+            self.send_json({"profiles": load_user_profiles()})
         elif not path.startswith("/api/"):
             self.serve_static_path(path)   # index.html, css, js, fonts/*.woff2, svg, ...
         else:
@@ -868,6 +892,33 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
                 elif sys.platform.startswith("win"):
                     subprocess.Popen("start ms-settings:privacy", shell=True)
                 self.send_json({"ok": True})
+            except Exception as e:
+                self.send_json({"ok": False, "error": str(e)}, 400)
+
+        elif parsed.path == "/api/profiles/save":
+            body = self._read_body()
+            try:
+                p = json.loads(body)
+                name = str(p.get("name", "")).strip()[:60]
+                settings = p.get("settings", {})
+                if not name or not isinstance(settings, dict):
+                    self.send_json({"ok": False, "error": "bad profile"}, 400)
+                    return
+                profs = load_user_profiles()
+                profs[name] = settings
+                _write_user_profiles(profs)
+                self.send_json({"ok": True, "profiles": profs})
+            except Exception as e:
+                self.send_json({"ok": False, "error": str(e)}, 400)
+
+        elif parsed.path == "/api/profiles/delete":
+            body = self._read_body()
+            try:
+                name = str(json.loads(body).get("name", ""))
+                profs = load_user_profiles()
+                profs.pop(name, None)
+                _write_user_profiles(profs)
+                self.send_json({"ok": True, "profiles": profs})
             except Exception as e:
                 self.send_json({"ok": False, "error": str(e)}, 400)
         else:
