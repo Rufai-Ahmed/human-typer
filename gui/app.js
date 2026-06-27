@@ -27,6 +27,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnDelProfile = document.getElementById('btn-del-profile');
     const profileName = document.getElementById('profile-name');
 
+    // --- Stealth meter ---
+    const stealthMeter = document.getElementById('stealth-meter');
+    const stealthLevel = document.getElementById('stealth-level');
+    const stealthWpm = document.getElementById('stealth-wpm');
+    const stealthTip = document.getElementById('stealth-tip');
+
     // --- Text + actions ---
     const textInput = document.getElementById('text-input');
     const charCount = document.getElementById('char-count');
@@ -166,6 +172,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ============================ Settings ============================
     speedSlider.addEventListener('input', (e) => {
         speedValue.textContent = `${e.target.value} ms`;
+        updateStealth();
     });
 
     delaySlider.addEventListener('input', (e) => {
@@ -175,6 +182,7 @@ document.addEventListener('DOMContentLoaded', () => {
     typosSlider.addEventListener('input', (e) => {
         typosValue.textContent = `${e.target.value}%`;
         typosValue.classList.toggle('warn', parseFloat(e.target.value) > 5);
+        updateStealth();
     });
 
     function syncHumanize() {
@@ -187,6 +195,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     humanizeCheckbox.addEventListener('change', syncHumanize);
+    humanizeCheckbox.addEventListener('change', updateStealth);
     syncHumanize();
 
     // ============================ Profiles / Personas ============================
@@ -210,6 +219,7 @@ document.addEventListener('DOMContentLoaded', () => {
             variance: s.variance, word_pause: s.word_pause, sentence_pause: s.sentence_pause,
             hesitation_prob: s.hesitation_prob, hesitation: s.hesitation,
         };
+        updateStealth();
     }
 
     function currentSettings() {
@@ -289,6 +299,34 @@ document.addEventListener('DOMContentLoaded', () => {
         btnDelProfile.classList.add('hidden');
     });
 
+    // ============================ Stealth meter ============================
+    function stealthReport() {
+        const len = textInput.value.trim().length;
+        const humanize = humanizeCheckbox.checked;
+        const delayMs = parseFloat(speedSlider.value);
+        const typos = parseFloat(typosSlider.value);
+        const wpm = Math.round((12000 / Math.max(delayMs, 1)) * (humanize ? 0.82 : 1));
+        const tips = [];
+        let score = 100;
+        if (!humanize) { score -= 45; tips.push('Humanize is off. A constant rhythm with zero errors is the easiest tell. Turn it on.'); }
+        if (wpm > 125) { score -= 30; tips.push('About ' + wpm + ' WPM is faster than a human can sustain. Raise the ms to slow it down.'); }
+        else if (wpm > 100) { score -= 12; tips.push('Around ' + wpm + ' WPM is on the fast end. Fine for short bursts; slower is safer for long text.'); }
+        if (humanize && typos === 0 && len > 400) { score -= 12; tips.push('Zero typos across a long passage can look too clean. A small typo rate reads more human.'); }
+        if (!tips.length) tips.push('Type it, do not paste. This sends real keystrokes and builds a genuine edit history.');
+        score = Math.max(5, Math.min(100, score));
+        const level = score >= 80 ? 'Looks human' : score >= 55 ? 'Some tells' : 'Risky';
+        const cls = score >= 80 ? 'ok' : score >= 55 ? 'warn' : 'bad';
+        return { level, cls, wpm, tip: tips[0] };
+    }
+
+    function updateStealth() {
+        const r = stealthReport();
+        stealthMeter.className = 'stealth-meter ' + r.cls;
+        stealthLevel.textContent = r.level;
+        stealthWpm.textContent = '~' + r.wpm + ' WPM';
+        stealthTip.textContent = r.tip;
+    }
+
     // ============================ Counters ============================
     function updateCounters() {
         const text = textInput.value;
@@ -297,6 +335,7 @@ document.addEventListener('DOMContentLoaded', () => {
         wordCount.textContent = `${words} word${words !== 1 ? 's' : ''}`;
     }
     textInput.addEventListener('input', updateCounters);
+    textInput.addEventListener('input', updateStealth);
 
     // ============================ Clipboard ============================
     btnClipboard.addEventListener('click', async () => {
@@ -496,7 +535,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 btnResume.classList.remove('hidden');
             }
             else if (data.state === 'done') {
-                cleanup('done');
+                cleanup('done', data);
             }
             else if (data.state === 'aborted') {
                 cleanup('aborted');
@@ -506,7 +545,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function cleanup(finalState) {
+    function cleanup(finalState, data) {
         if (pollInterval) {
             clearInterval(pollInterval);
             pollInterval = null;
@@ -515,7 +554,9 @@ document.addEventListener('DOMContentLoaded', () => {
         btnResume.classList.add('hidden');
         if (finalState === 'done') {
             overlayTitle.textContent = 'done';
-            overlayInstruction.textContent = 'Everything typed successfully.';
+            overlayInstruction.textContent = data
+                ? `Typed ${data.typed_chars} characters at ~${Math.round(data.effective_wpm)} WPM. Real keystrokes and a genuine edit history, not a paste.`
+                : 'Everything typed successfully.';
             progressBar.style.transform = 'scaleX(1)';
             progressPercent.textContent = '100%';
             countdownTimer.textContent = '✓';
@@ -549,6 +590,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ============================ Init ============================
     updateCounters();
+    updateStealth();
     loadProfiles();
     checkLicense();
     checkForUpdate();
