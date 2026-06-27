@@ -207,16 +207,27 @@ def _frontmost_token():
 
 
 def _focus_watcher() -> None:
-    """Auto-pause a run if the user switches away from their target window."""
+    """Auto-pause a run if the user genuinely switches away from their target.
+
+    Debounced: the frontmost app must differ for two consecutive polls (~0.9s)
+    before pausing, so a transient blip (a menu, a notification) doesn't pause.
+    """
+    miss = 0
     while True:
         s = typing_status
-        if s.state == "typing" and s.focus_guard and s.focus_target is not None:
+        if s.state == "typing" and s.focus_guard and s.focus_target is not None and not s.pause_event.is_set():
             tok = _frontmost_token()
-            if tok is not None and tok != s.focus_target and not s.pause_event.is_set():
-                s.pause_reason = "focus"
-                s.pause_event.set()
+            if tok is not None and tok != s.focus_target:
+                miss += 1
+                if miss >= 2:
+                    s.pause_reason = "focus"
+                    s.pause_event.set()
+                    miss = 0
+            else:
+                miss = 0
             time.sleep(0.45)
         else:
+            miss = 0
             time.sleep(0.3)
 
 
@@ -299,7 +310,7 @@ def _macos_esc_poller() -> None:
     inside a Cocoa app; polling CGEventSourceKeyState sidesteps that entirely.
     """
     while True:
-        if typing_status.state in ("countdown", "typing"):
+        if typing_status.state in ("countdown", "typing", "paused"):
             try:
                 # Check both source states (combined session + HID) for reliability.
                 if cg.CGEventSourceKeyState(0, _ESC_KEYCODE) or cg.CGEventSourceKeyState(1, _ESC_KEYCODE):
@@ -336,7 +347,7 @@ def start_global_abort_listener() -> bool:
     # Windows/Linux: pynput global listener.
     if HAS_PYNPUT:
         def on_press(key):
-            if key == Key.esc and typing_status.state in ("countdown", "typing"):
+            if key == Key.esc and typing_status.state in ("countdown", "typing", "paused"):
                 typing_status.cancel_event.set()
         _abort_listener = Listener(on_press=on_press)
         _abort_listener.daemon = True
