@@ -1045,6 +1045,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Per-char probability of a typo+self-correction (e.g. 0.02).")
     p.add_argument("--delay", type=float, default=5.0,
                    help="Countdown seconds before typing starts.")
+    p.add_argument("--tabs", action="store_true",
+                   help="Form mode: press Tab between lines (Tab-jump through fields).")
     return p
 
 
@@ -1066,6 +1068,8 @@ def main() -> None:
     text = resolve_text(args)
     if not text:
         sys.exit("Resolved text is empty — nothing to type.")
+    if args.tabs:
+        text = text.replace("\r\n", "\n").replace("\n", "\t")  # form mode: Tab between fields
 
     if args.delay_ms is not None:
         delay_ms = args.delay_ms

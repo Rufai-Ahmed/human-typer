@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const delaySlider = document.getElementById('delay');
     const delayValue = document.getElementById('delay-value');
     const humanizeCheckbox = document.getElementById('humanize');
+    const formModeCheckbox = document.getElementById('form-mode');
     const typoGroup = document.getElementById('typo-group');
     const typosSlider = document.getElementById('typos');
     const typosValue = document.getElementById('typos-value');
@@ -384,7 +385,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch('/api/type', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text, delay_ms, humanize, typos, delay,
+                body: JSON.stringify({ text: (formModeCheckbox.checked ? text.replace(/\r?\n/g, '\t') : text),
+                    delay_ms, humanize, typos, delay,
                     variance: advanced.variance, word_pause: advanced.word_pause,
                     sentence_pause: advanced.sentence_pause, hesitation_prob: advanced.hesitation_prob,
                     hesitation: advanced.hesitation })
