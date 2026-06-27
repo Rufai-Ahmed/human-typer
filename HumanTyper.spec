@@ -86,8 +86,8 @@ if sys.platform == 'darwin':
         info_plist={
             'CFBundleName': 'Human Typer',
             'CFBundleDisplayName': 'Human Typer',
-            'CFBundleShortVersionString': '1.5.1',
-            'CFBundleVersion': '1.5.1',
+            'CFBundleShortVersionString': '1.6.0',
+            'CFBundleVersion': '1.6.0',
             'NSHighResolutionCapable': True,
             'LSMinimumSystemVersion': '10.13.0',
             'NSHumanReadableCopyright': '© Human Typer',

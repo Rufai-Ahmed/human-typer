@@ -357,7 +357,7 @@ ACTIVATE_URL = os.environ.get(
 
 # Bump this on every release; the app compares it to the server's latest version
 # and shows a "Download update" banner when this build is behind.
-APP_VERSION = "1.5.1"
+APP_VERSION = "1.6.0"
 VERSION_URL = os.environ.get(
     "HUMANTYPER_VERSION_URL", ACTIVATE_URL.rsplit("/api/", 1)[0] + "/api/version"
 )
