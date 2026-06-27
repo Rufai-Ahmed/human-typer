@@ -40,6 +40,14 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+# macOS arch: universal2 by default (CI, where a universal2 Python is installed).
+# Set HT_MAC_ARCH=native for a fast single-arch local build from a non-fat Python
+# (e.g. updating this machine's own copy).
+if sys.platform == 'darwin':
+    _target_arch = None if os.environ.get('HT_MAC_ARCH') == 'native' else 'universal2'
+else:
+    _target_arch = None
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -53,7 +61,7 @@ exe = EXE(
     console=False,          # windowed: no terminal window
     disable_windowed_traceback=False,
     argv_emulation=True,    # let macOS pass file/open events through cleanly
-    target_arch='universal2' if sys.platform == 'darwin' else None,
+    target_arch=_target_arch,
     codesign_identity=None,
     entitlements_file=None,
     icon=ICON,
@@ -78,8 +86,8 @@ if sys.platform == 'darwin':
         info_plist={
             'CFBundleName': 'Human Typer',
             'CFBundleDisplayName': 'Human Typer',
-            'CFBundleShortVersionString': '1.4.0',
-            'CFBundleVersion': '1.4.0',
+            'CFBundleShortVersionString': '1.5.0',
+            'CFBundleVersion': '1.5.0',
             'NSHighResolutionCapable': True,
             'LSMinimumSystemVersion': '10.13.0',
             'NSHumanReadableCopyright': '© Human Typer',
