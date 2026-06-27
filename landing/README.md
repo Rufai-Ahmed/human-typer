@@ -18,7 +18,9 @@ landing/
 ## One-time setup
 
 **1. Supabase**
-- SQL editor → run `supabase_schema.sql`.
+- SQL editor → run `supabase_schema.sql`. It is safe to re-run: it `create or
+  replace`s every function (including the new `claim_keys` used by team/volume
+  packs) and re-applies the `revoke`s, without touching existing rows.
 - Project Settings → API → copy the **service_role** key (SECRET) and the Project URL.
 
 **2. Load keys**
@@ -52,11 +54,40 @@ Then **Settings → Domains → Add** `humantyper.rufaiahmed.com`.
 
 ## How it works
 
-- **Buy:** Paystack popup (public key) charges ₦10,000 and collects the email.
+- **Buy:** Paystack popup (public key) charges the selected total and collects the
+  email. Single seat is ₦10,000; team/volume packs lower the per-seat price.
 - **Deliver:** on success the browser AND the Paystack webhook both call
   `/api/claim`, which **re-verifies the payment with Paystack's secret key**,
-  atomically claims one unsold key from Supabase (idempotent per payment), and
-  emails it via Resend. Forged calls verify as failed and get nothing.
+  **derives the seat count from the verified amount** (never from the client),
+  atomically claims that many unsold keys from Supabase (idempotent per payment),
+  and emails them via Resend. Forged calls verify as failed and get nothing.
+
+## Team / volume packs
+
+Each seat is an ordinary 1-device key; buying more seats just lowers the per-seat
+price. There is no separate "Pro" tier, it is the same Standard product bought N at
+a time. The seat count is derived **only** from the server-verified Paystack amount,
+so a buyer can never receive more keys than they paid for (the client-sent quantity
+is ignored). Buyers are granted the largest tier whose total they actually covered:
+
+| Seats | Per seat | Amount paid (NGN) | Amount in kobo | Keys delivered |
+|---|---|---|---|---|
+| 1  | ₦10,000 | ₦10,000  | 1,000,000  | 1  |
+| 5  | ₦8,000  | ₦40,000  | 4,000,000  | 5  |
+| 10 | ₦7,000  | ₦70,000  | 7,000,000  | 10 |
+| 25 | ₦6,000  | ₦150,000 | 15,000,000 | 25 |
+
+`api/claim.js` maps the verified amount back to seats and calls the
+`claim_keys(p_email, p_ref, p_qty)` Supabase function, which atomically allocates up
+to `p_qty` available keys with `for update skip locked`, is idempotent per payment
+ref (returns the same set on the callback + webhook double-fire), and emails all of
+them in one message ("each key activates 1 device, share one per teammate"). If the
+key pool is short, it sends what is available and emails `ADMIN_EMAIL` to top up.
+
+**Migration:** re-run `supabase_schema.sql` in the Supabase SQL editor (or just the
+`claim_keys` function + its `revoke all on function public.claim_keys(text, text, int)
+from public, anon, authenticated;`). The existing `claim_key` is left in place. No
+app/Vercel env changes are required.
 - **Activate:** the app posts the key + a device fingerprint to `/api/activate`,
   which binds the key to that one device. A second device gets `in_use`.
 - **Revoke / move device** (Supabase SQL editor):

@@ -1,12 +1,14 @@
-// Auto-deliver a license key after a Paystack payment (Supabase-backed).
+// Auto-deliver license keys after a Paystack payment (Supabase-backed).
+// Handles both single (1 seat) and team/volume packs (5 / 10 / 25 seats).
 //
-// Triggered two ways (both safe — idempotent per payment reference):
+// Triggered two ways (both safe and idempotent per payment reference):
 //   1. the browser calls it on payment success with { reference }
 //   2. Paystack's webhook POSTs { event, data: { reference } } here
 //
-// It never trusts the caller about success — it re-verifies the transaction with
-// Paystack using the SECRET key, then atomically claims an unsold key from
-// Supabase and emails it via Resend.
+// It never trusts the caller about success or quantity: it re-verifies the
+// transaction with Paystack using the SECRET key, derives the seat count from the
+// verified amount, then atomically claims that many unsold keys from Supabase and
+// emails them via Resend.
 //
 // Vercel env vars (set in the dashboard, never in code):
 //   PAYSTACK_SECRET_KEY        sk_live_...
@@ -49,17 +51,36 @@ async function sendEmail(to, subject, html) {
   return r.json();
 }
 
-function keyEmailHtml(key, downloadUrl) {
-  return `
-    <div style="font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:520px;margin:0 auto;color:#111">
-      <h2 style="margin:0 0 8px">Your Human Typer license key</h2>
-      <p>Thank you for your purchase! Your lifetime key is below.</p>
+function keysEmailHtml(keys, downloadUrl) {
+  const many = keys.length > 1;
+  const keyBlocks = keys
+    .map(
+      (k) => `
       <p style="font-size:20px;font-weight:700;letter-spacing:1px;background:#f4f4f8;
                 border:1px solid #e2e2ea;border-radius:10px;padding:14px 16px;text-align:center;
-                font-family:'JetBrains Mono',monospace">${key}</p>
+                font-family:'JetBrains Mono',monospace;margin:10px 0">${k}</p>`,
+    )
+    .join("");
+  const teamNote = many
+    ? `<p style="background:#eef7f1;border:1px solid #cfe9da;border-radius:10px;padding:12px 14px">
+         Each key activates <strong>1 device</strong>. Share one key per teammate: one key, one machine.
+       </p>`
+    : "";
+  return `
+    <div style="font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:520px;margin:0 auto;color:#111">
+      <h2 style="margin:0 0 8px">Your Human Typer license ${many ? "keys" : "key"}</h2>
+      <p>Thank you for your purchase! ${
+        many
+          ? "Your " + keys.length + " lifetime keys are below."
+          : "Your lifetime key is below."
+      }</p>
+      ${keyBlocks}
+      ${teamNote}
       <ol style="line-height:1.7">
         <li>Download the app: <a href="${downloadUrl}">${downloadUrl}</a></li>
-        <li>Open it and paste this key on the activation screen (one-time, needs internet).</li>
+        <li>Open it and paste ${
+          many ? "a key" : "this key"
+        } on the activation screen (one-time, needs internet).</li>
         <li>Activated for life on that machine. No subscription, ever.</li>
       </ol>
       <p style="color:#666;font-size:13px">Keep this email as your proof of purchase.
@@ -101,6 +122,22 @@ module.exports = async (req, res) => {
   const downloadUrl =
     process.env.DOWNLOAD_URL || "https://humantyper.rufaiahmed.com#download";
 
+  // Volume tiers: total paid (in kobo) -> number of 1-device keys to hand out.
+  // The seat count is derived ONLY from the Paystack-verified amount below, never
+  // from anything the client sent (anti-fraud). A buyer is granted the largest tier
+  // whose total they actually covered, so they can never get more keys than paid for.
+  // Keep this in sync with PER_SEAT_KOBO in app.js.
+  const TIERS = [
+    { seats: 25, totalKobo: 15000000 }, // ₦6,000/seat
+    { seats: 10, totalKobo: 7000000 }, // ₦7,000/seat
+    { seats: 5, totalKobo: 4000000 }, // ₦8,000/seat
+    { seats: 1, totalKobo: priceKobo }, // ₦10,000/seat (single)
+  ];
+  const seatsForAmount = (amountKobo) => {
+    for (const t of TIERS) if (amountKobo >= t.totalKobo) return t.seats;
+    return 0;
+  };
+
   try {
     // Source of truth: verify the transaction directly with Paystack.
     const vr = await fetch(
@@ -129,31 +166,55 @@ module.exports = async (req, res) => {
       return;
     }
 
-    // Atomically claim an unsold key (idempotent per reference).
-    const claim = await rpc("claim_key", { p_email: email, p_ref: reference });
-    if (!claim || !claim.key) {
+    // How many keys this payment is owed, from the VERIFIED amount only.
+    const qty = seatsForAmount(tx.amount);
+
+    // Atomically claim up to `qty` unsold keys. Idempotent per reference: a repeat
+    // call for the same payment returns the SAME keys and never allocates more.
+    const claim = await rpc("claim_keys", {
+      p_email: email,
+      p_ref: reference,
+      p_qty: qty,
+    });
+    const keys = (claim && claim.keys) || [];
+    const count = keys.length;
+
+    if (count === 0) {
       try {
         await sendEmail(
           process.env.ADMIN_EMAIL || "me@rufaiahmed.com",
           "Human Typer: license key pool is EMPTY",
-          `<p>Paid order ${reference} (${email}) could not be fulfilled — no keys left. Add keys + re-seed Supabase, then email manually.</p>`,
+          `<p>Paid order ${reference} (${email}) for ${qty} seat(s) could not be fulfilled; no keys left. Add keys + re-seed Supabase, then email manually.</p>`,
         );
       } catch (_) {}
-      res.status(200).json({ ok: false, status: "out_of_keys" });
+      res.status(200).json({ ok: false, status: "out_of_keys", email });
       return;
     }
 
     if (claim.new === false) {
-      res.status(200).json({ ok: true, status: "already_processed", email });
+      res
+        .status(200)
+        .json({ ok: true, status: "already_processed", email, count });
       return;
     }
 
-    await sendEmail(
-      email,
-      "Your Human Typer license key",
-      keyEmailHtml(claim.key, downloadUrl),
-    );
-    res.status(200).json({ ok: true, status: "key_sent", email });
+    // Short pool: fewer keys than paid for. Send what we have and flag a manual top-up.
+    if (count < qty) {
+      try {
+        await sendEmail(
+          process.env.ADMIN_EMAIL || "me@rufaiahmed.com",
+          "Human Typer: volume order PARTIALLY filled",
+          `<p>Paid order ${reference} (${email}) needed ${qty} keys but only ${count} were available. Those ${count} were emailed; add ${qty - count} more key(s), re-seed Supabase, and send the rest manually.</p>`,
+        );
+      } catch (_) {}
+    }
+
+    const subject =
+      count > 1
+        ? `Your ${count} Human Typer license keys`
+        : "Your Human Typer license key";
+    await sendEmail(email, subject, keysEmailHtml(keys, downloadUrl));
+    res.status(200).json({ ok: true, status: "key_sent", email, count });
   } catch (err) {
     // Let Paystack retry on transient failures.
     res

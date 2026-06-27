@@ -677,6 +677,87 @@ kbd{
   font-size:var(--text-sm);
 }
 
+/* ---- Team / volume seat picker (inside the price card) ---- */
+.seat-pick{
+  margin-top:var(--s-6);
+  padding-top:var(--s-6);
+  border-top:var(--bw-thin) solid var(--border);
+}
+.seat-pick-label{
+  font-family:var(--font-mono);
+  font-size:var(--text-sm);
+  font-weight:var(--fw-medium);
+  letter-spacing:var(--ls-key);
+  color:var(--text);
+}
+.seat-pick-sub{
+  margin-top:var(--s-2);
+  color:var(--text-muted);
+  font-size:var(--text-sm);
+}
+.seat-options{
+  display:flex;
+  flex-direction:column;
+  gap:var(--s-2);
+  margin-top:var(--s-4);
+}
+.seat-opt{
+  display:flex;
+  align-items:center;
+  gap:var(--s-3);
+  width:100%;
+  text-align:left;
+  padding:12px 14px;
+  background:var(--surface-2);
+  border:var(--bw-thin) solid var(--border);
+  border-radius:var(--r-input);
+  color:var(--text-secondary);
+  cursor:pointer;
+  font-family:var(--font-body);
+  font-size:var(--text-base);
+  transition:border-color var(--t-hover) var(--ease),
+             background-color var(--t-hover) var(--ease),
+             transform var(--t-press) var(--ease-snap);
+}
+.seat-opt:hover{ border-color:var(--border-strong); }
+.seat-opt:active{ transform:translateY(1px); }
+.seat-opt.is-active{
+  border-color:var(--accent);
+  background:var(--accent-soft);
+}
+.seat-qty{
+  flex:0 0 5rem;
+  font-weight:var(--fw-semibold);
+  color:var(--text);
+}
+.seat-per{
+  flex:1 1 auto;
+  font-family:var(--font-mono);
+  font-size:var(--text-sm);
+  color:var(--text-muted);
+}
+.seat-per .num{ color:var(--text-secondary); }
+.seat-total{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-end;
+  gap:2px;
+  font-family:var(--font-mono);
+  font-size:var(--text-sm);
+  color:var(--text-secondary);
+}
+.seat-save{
+  font-family:var(--font-mono);
+  font-size:var(--text-eyebrow);
+  letter-spacing:var(--ls-key);
+  color:var(--accent-text);
+}
+.seat-note{
+  margin-top:var(--s-3);
+  color:var(--text-subtle);
+  font-size:var(--text-sm);
+}
+
 /* ============================================================
    DOWNLOAD
    ============================================================ */
