@@ -18,6 +18,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const delayValue = document.getElementById('delay-value');
     const humanizeCheckbox = document.getElementById('humanize');
     const formModeCheckbox = document.getElementById('form-mode');
+    const hotkeyToggle = document.getElementById('hotkey-toggle');
+    const clipwatchToggle = document.getElementById('clipwatch-toggle');
     const typoGroup = document.getElementById('typo-group');
     const typosSlider = document.getElementById('typos');
     const typosValue = document.getElementById('typos-value');
@@ -459,6 +461,16 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     renderQueue();
+
+    // ============================ Quick-type hotkey + clipboard watch ============================
+    function syncQuickType() {
+        fetch('/api/quicktype', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hotkey: hotkeyToggle.checked, clipwatch: clipwatchToggle.checked }),
+        }).catch(() => { /* ignore */ });
+    }
+    hotkeyToggle.addEventListener('change', syncQuickType);
+    clipwatchToggle.addEventListener('change', syncQuickType);
 
     // ============================ Test Field (in-window preview) ============================
     // Types into the in-window field WITHOUT the full-screen overlay, so the field

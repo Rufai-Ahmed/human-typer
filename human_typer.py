@@ -220,6 +220,78 @@ def _focus_watcher() -> None:
             time.sleep(0.3)
 
 
+# --- Quick-type hotkey + clipboard watch -----------------------------------
+hotkey_enabled = False
+clipwatch_enabled = False
+_hotkey_listener = None
+_last_clip = None
+
+
+def _chord_down() -> bool:
+    """True while the quick-type chord (Cmd/Ctrl + Shift + H) is held.
+
+    macOS uses the same thread-safe CGEventSourceKeyState as the Esc stop (never
+    pynput, which crashes Text Services from a worker thread inside the Cocoa app).
+    """
+    try:
+        if IS_MAC and HAS_COREGRAPHICS:
+            cmd = cg.CGEventSourceKeyState(0, 55) or cg.CGEventSourceKeyState(0, 54)
+            shift = cg.CGEventSourceKeyState(0, 56) or cg.CGEventSourceKeyState(0, 60)
+            return bool(cmd and shift and cg.CGEventSourceKeyState(0, 4))  # H = keycode 4
+        if sys.platform.startswith("win"):
+            g = ctypes.windll.user32.GetAsyncKeyState
+            return bool((g(0x11) & 0x8000) and (g(0x10) & 0x8000) and (g(0x48) & 0x8000))
+    except Exception:
+        return False
+    return False
+
+
+def _fire_quick_type() -> None:
+    """Type the clipboard into the focused field, no window raise, 1s lead-in."""
+    if not is_activated() or not accessibility_ok():
+        return
+    if typing_status.state in ("countdown", "typing", "paused"):
+        return
+    try:
+        text = read_clipboard()
+    except Exception:
+        return
+    if not text or not text.strip():
+        return
+    typing_status.focus_guard = False   # quick-type goes wherever you already are
+    threading.Thread(target=type_text, args=(text, TypingProfile(), 1.0, True), daemon=True).start()
+
+
+def _hotkey_watcher() -> None:
+    global _last_clip
+    armed = True
+    tick = 0
+    while True:
+        if typing_status.state == "idle" and (hotkey_enabled or clipwatch_enabled):
+            if hotkey_enabled:
+                if _chord_down():
+                    if armed:
+                        armed = False
+                        _fire_quick_type()
+                else:
+                    armed = True
+            if clipwatch_enabled and tick % 4 == 0:    # poll the clipboard ~every 0.5s
+                try:
+                    clip = read_clipboard()
+                    if _last_clip is None:
+                        _last_clip = clip          # baseline; don't fire on the existing clipboard
+                    elif clip != _last_clip:
+                        _last_clip = clip
+                        if clip and clip.strip():
+                            _fire_quick_type()
+                except Exception:
+                    pass
+            tick += 1
+            time.sleep(0.06)
+        else:
+            time.sleep(0.25)
+
+
 def _macos_esc_poller() -> None:
     """Poll the global Esc key state via CoreGraphics (thread-safe, no TSM).
 
@@ -245,10 +317,13 @@ def start_global_abort_listener() -> bool:
     Mirrors goghostwriter's emergency stop: pressing Esc while a countdown or
     typing run is active cancels it, even when another window has focus.
     """
-    global _abort_listener, _focus_listener
+    global _abort_listener, _focus_listener, _hotkey_listener
     if _focus_listener is None:
         _focus_listener = threading.Thread(target=_focus_watcher, daemon=True)
         _focus_listener.start()
+    if _hotkey_listener is None:
+        _hotkey_listener = threading.Thread(target=_hotkey_watcher, daemon=True)
+        _hotkey_listener.start()
     if _abort_listener is not None:
         return False
 
@@ -919,6 +994,20 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
                 profs.pop(name, None)
                 _write_user_profiles(profs)
                 self.send_json({"ok": True, "profiles": profs})
+            except Exception as e:
+                self.send_json({"ok": False, "error": str(e)}, 400)
+
+        elif parsed.path == "/api/quicktype":
+            body = self._read_body()
+            try:
+                global hotkey_enabled, clipwatch_enabled, _last_clip
+                p = json.loads(body)
+                hotkey_enabled = bool(p.get("hotkey", hotkey_enabled))
+                was = clipwatch_enabled
+                clipwatch_enabled = bool(p.get("clipwatch", clipwatch_enabled))
+                if clipwatch_enabled and not was:
+                    _last_clip = None   # re-baseline so it won't fire on the current clipboard
+                self.send_json({"ok": True, "hotkey": hotkey_enabled, "clipwatch": clipwatch_enabled})
             except Exception as e:
                 self.send_json({"ok": False, "error": str(e)}, 400)
         else:
