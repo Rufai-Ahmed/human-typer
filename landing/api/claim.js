@@ -88,6 +88,21 @@ function keysEmailHtml(keys, downloadUrl) {
     </div>`;
 }
 
+function nairaFromKobo(kobo) {
+  return "NGN " + (Math.round(Number(kobo) || 0) / 100).toLocaleString("en-US");
+}
+
+function paymentAlertHtml({ email, amountKobo, reference, qty, count }) {
+  return `
+    <div style="font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:520px;margin:0 auto;color:#111">
+      <h2 style="margin:0 0 10px">New Human Typer payment</h2>
+      <p style="margin:4px 0"><strong>Amount:</strong> ${nairaFromKobo(amountKobo)}</p>
+      <p style="margin:4px 0"><strong>Email:</strong> ${email}</p>
+      <p style="margin:4px 0"><strong>Seats:</strong> ${count} of ${qty} key(s) delivered</p>
+      <p style="margin:10px 0 0;color:#666;font-size:13px"><strong>Reference:</strong> ${reference}</p>
+    </div>`;
+}
+
 module.exports = async (req, res) => {
   if (req.method !== "POST") {
     res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -178,6 +193,19 @@ module.exports = async (req, res) => {
     });
     const keys = (claim && claim.keys) || [];
     const count = keys.length;
+
+    // Notify the owner of every NEW payment, with the buyer email and amount.
+    // Gated on claim.new so the duplicate hit (browser + Paystack webhook fire the
+    // same reference) only alerts once. Best-effort: never blocks key delivery.
+    if (!claim || claim.new !== false) {
+      try {
+        await sendEmail(
+          process.env.PAYMENT_ALERT_EMAIL || "payment@rufaiahmed.com",
+          `New Human Typer payment: ${nairaFromKobo(tx.amount)} from ${email}`,
+          paymentAlertHtml({ email, amountKobo: tx.amount, reference, qty, count }),
+        );
+      } catch (_) {}
+    }
 
     if (count === 0) {
       try {
