@@ -33,32 +33,26 @@ document.getElementById('year').textContent = new Date().getFullYear();
     tick();
 })();
 
-// --- Paystack checkout: lifetime (one-time, single + team packs) OR monthly pass ---
+// --- Paystack checkout: two cards (lifetime one-time + team packs, and monthly pass) ---
 (() => {
     const PAYSTACK_PUBLIC_KEY = 'pk_live_e4a3914a47bf7166a817304186e8168b54622deb';
 
-    // Per-seat price in kobo for each seat count (₦1 = 100 kobo). A seat is one
-    // ordinary 1-device key; buying more seats just lowers the per-seat price.
-    // The server re-derives the seat count from the Paystack-verified amount, so
-    // this MUST stay in sync with the amount->tier map in api/claim.js.
+    // Per-seat price in kobo (₦1 = 100 kobo). MUST match the amount->tier map in api/claim.js.
     const PER_SEAT_KOBO = { 1: 1000000, 5: 800000, 10: 700000, 25: 600000 };
     // Monthly pass: one payment buys 30 days. MUST match MONTHLY_KOBO in api/claim.js.
     const MONTHLY_KOBO = 200000;
 
-    const btnBuy = document.getElementById('btn-buy');
-    const emailInput = document.getElementById('buyer-email');
-    const msg = document.getElementById('buy-msg');
-    const priceAmount = document.getElementById('price-amount');
-    const priceBadge = document.getElementById('price-badge');
-    const seatOptions = document.getElementById('seat-options');
-    const seatPick = document.getElementById('seat-pick');
-    const planToggle = document.getElementById('plan-toggle');
-    if (!btnBuy) return;
-
-    let plan = 'lifetime';   // 'lifetime' | 'monthly'
-    let seats = 1;
     const naira = (kobo) => '₦' + Math.round(kobo / 100).toLocaleString('en-NG');
-    const totalKobo = () => (plan === 'monthly' ? MONTHLY_KOBO : PER_SEAT_KOBO[seats] * seats);
+    const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+
+    function makeShowMsg(msgEl) {
+        return (text, isError) => {
+            if (!msgEl) return;
+            msgEl.textContent = text;
+            msgEl.classList.remove('hidden');
+            msgEl.classList.toggle('error', !!isError);
+        };
+    }
 
     function setActive(group, match) {
         if (!group) return;
@@ -69,93 +63,28 @@ document.getElementById('year').textContent = new Date().getFullYear();
         });
     }
 
-    function refresh() {
-        const total = totalKobo();
-        if (plan === 'monthly') {
-            if (priceAmount) priceAmount.innerHTML = naira(total) + '<span class="price-once"> / month</span>';
-            if (priceBadge) priceBadge.textContent = 'Monthly pass';
-            if (seatPick) seatPick.classList.add('hidden');
-            btnBuy.textContent = 'Get 30 days for ' + naira(total);
-        } else {
-            const tail = seats === 1 ? ' once' : ' for ' + seats + ' seats';
-            if (priceAmount) priceAmount.innerHTML = naira(total) + '<span class="price-once">' + tail + '</span>';
-            if (priceBadge) priceBadge.textContent = 'Lifetime license';
-            if (seatPick) seatPick.classList.remove('hidden');
-            btnBuy.textContent = seats === 1
-                ? 'Buy lifetime access for ' + naira(total)
-                : 'Buy ' + seats + ' seats for ' + naira(total);
-        }
-    }
-
-    if (planToggle) {
-        planToggle.addEventListener('click', (e) => {
-            const opt = e.target.closest('.plan-opt');
-            if (!opt || !planToggle.contains(opt)) return;
-            const p = opt.getAttribute('data-plan');
-            if (p !== 'monthly' && p !== 'lifetime') return;
-            plan = p;
-            if (plan === 'monthly') seats = 1;   // monthly is a single device
-            setActive(planToggle, (b) => b === opt);
-            if (plan === 'monthly') setActive(seatOptions, (b) => b.getAttribute('data-seats') === '1');
-            refresh();
-        });
-    }
-
-    if (seatOptions) {
-        seatOptions.addEventListener('click', (e) => {
-            const opt = e.target.closest('.seat-opt');
-            if (!opt || !seatOptions.contains(opt)) return;
-            const n = parseInt(opt.getAttribute('data-seats'), 10);
-            if (!PER_SEAT_KOBO[n]) return;
-            plan = 'lifetime';   // picking seats means the lifetime plan
-            seats = n;
-            setActive(seatOptions, (b) => b === opt);
-            setActive(planToggle, (b) => b.getAttribute('data-plan') === 'lifetime');
-            refresh();
-        });
-    }
-    refresh();
-
-    function showMsg(text, isError) {
-        msg.textContent = text;
-        msg.classList.remove('hidden');
-        msg.classList.toggle('error', !!isError);
-    }
-
-    const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
-
-    btnBuy.addEventListener('click', () => {
-        const email = (emailInput.value || '').trim();
-        if (!validEmail(email)) {
-            showMsg('Please enter a valid email. That is where your license key is sent.', true);
-            emailInput.focus();
-            return;
-        }
+    // Open Paystack for one purchase and report the outcome via showMsg.
+    function runCheckout({ email, amountKobo, plan, seats, showMsg }) {
         if (typeof PaystackPop === 'undefined') {
             showMsg('The payment library could not load. Check your connection, refresh, and try again.', true);
             return;
         }
-
-        const buyingPlan = plan;
-        const buyingSeats = plan === 'monthly' ? 1 : seats;
-        const productLabel = plan === 'monthly'
-            ? 'Human Typer Monthly pass (30 days)'
-            : 'Human Typer Lifetime license';
-
+        const isMonthly = plan === 'monthly';
+        const buyingSeats = isMonthly ? 1 : seats;
         const handler = PaystackPop.setup({
             key: PAYSTACK_PUBLIC_KEY,
             email: email,
-            amount: totalKobo(),
+            amount: amountKobo,
             currency: 'NGN',
             metadata: {
                 custom_fields: [
-                    { display_name: 'Product', variable_name: 'product', value: productLabel },
-                    { display_name: 'Plan', variable_name: 'plan', value: buyingPlan },
+                    { display_name: 'Product', variable_name: 'product',
+                      value: isMonthly ? 'Human Typer Monthly pass (30 days)' : 'Human Typer Lifetime license' },
+                    { display_name: 'Plan', variable_name: 'plan', value: plan },
                     { display_name: 'Seats', variable_name: 'seats', value: String(buyingSeats) },
                 ],
             },
             callback: function (response) {
-                const isMonthly = buyingPlan === 'monthly';
                 showMsg(isMonthly
                     ? 'Payment received. Issuing your monthly pass…'
                     : 'Payment received. Issuing your license ' + (buyingSeats === 1 ? 'key' : 'keys') + '…', false);
@@ -194,5 +123,87 @@ document.getElementById('year').textContent = new Date().getFullYear();
             },
         });
         handler.openIframe();
-    });
+    }
+
+    // ---- Lifetime card (single + team seats) ----
+    (() => {
+        const btn = document.getElementById('btn-buy-lifetime');
+        const emailInput = document.getElementById('buyer-email-lifetime');
+        const seatOptions = document.getElementById('seat-options');
+        const priceAmount = document.getElementById('price-amount-lifetime');
+        if (!btn) return;
+        const showMsg = makeShowMsg(document.getElementById('buy-msg-lifetime'));
+        let seats = 1;
+
+        function refresh() {
+            const total = PER_SEAT_KOBO[seats] * seats;
+            if (priceAmount) {
+                const tail = seats === 1 ? ' once' : ' for ' + seats + ' seats';
+                priceAmount.innerHTML = naira(total) + '<span class="price-once">' + tail + '</span>';
+            }
+            btn.textContent = seats === 1
+                ? 'Buy lifetime access for ' + naira(total)
+                : 'Buy ' + seats + ' seats for ' + naira(total);
+        }
+
+        if (seatOptions) {
+            seatOptions.addEventListener('click', (e) => {
+                const opt = e.target.closest('.seat-opt');
+                if (!opt || !seatOptions.contains(opt)) return;
+                const n = parseInt(opt.getAttribute('data-seats'), 10);
+                if (!PER_SEAT_KOBO[n]) return;
+                seats = n;
+                setActive(seatOptions, (b) => b === opt);
+                refresh();
+            });
+        }
+        refresh();
+
+        btn.addEventListener('click', () => {
+            const email = (emailInput.value || '').trim();
+            if (!validEmail(email)) {
+                showMsg('Please enter a valid email. That is where your key is sent.', true);
+                emailInput.focus();
+                return;
+            }
+            runCheckout({ email, amountKobo: PER_SEAT_KOBO[seats] * seats, plan: 'lifetime', seats, showMsg });
+        });
+    })();
+
+    // ---- Monthly card ----
+    (() => {
+        const btn = document.getElementById('btn-buy-monthly');
+        const emailInput = document.getElementById('buyer-email-monthly');
+        if (!btn) return;
+        const showMsg = makeShowMsg(document.getElementById('buy-msg-monthly'));
+
+        btn.addEventListener('click', () => {
+            const email = (emailInput.value || '').trim();
+            if (!validEmail(email)) {
+                showMsg('Please enter a valid email. That is where your key is sent.', true);
+                emailInput.focus();
+                return;
+            }
+            runCheckout({ email, amountKobo: MONTHLY_KOBO, plan: 'monthly', seats: 1, showMsg });
+        });
+    })();
+})();
+
+// --- Hero CTA price-rotator: alternate the label between the lifetime and monthly price ---
+(() => {
+    const cta = document.getElementById('hero-cta');
+    if (!cta) return;
+    const text = cta.querySelector('.cta-text');
+    if (!text) return;
+    const labels = ['Get it for ₦10,000 once', 'Get it for ₦2,000/month'];
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    let i = 0;
+    setInterval(() => {
+        i = (i + 1) % labels.length;
+        text.classList.add('cta-swap');     // fade/slide out
+        setTimeout(() => {
+            text.textContent = labels[i];
+            text.classList.remove('cta-swap');   // fade/slide the new price in
+        }, 240);
+    }, 3000);
 })();

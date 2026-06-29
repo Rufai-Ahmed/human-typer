@@ -397,6 +397,16 @@ kbd{
   flex-wrap:wrap;
   margin-top:var(--s-8);
 }
+/* Hero CTA price-rotator: the label fades/slides between the lifetime and monthly price. */
+#hero-cta{ overflow:hidden; }
+.cta-text{
+  display:inline-block;
+  transition:opacity 0.24s var(--ease), transform 0.24s var(--ease);
+}
+.cta-text.cta-swap{ opacity:0; transform:translateY(-0.5em); }
+@media (prefers-reduced-motion: reduce){
+  .cta-text{ transition:none; }
+}
 .hero-meta{
   display:flex;
   align-items:center;
@@ -588,6 +598,26 @@ kbd{
   border:var(--bw-thin) solid var(--border);
   border-radius:var(--r-card);
   padding:var(--s-8);
+}
+/* Two plan cards side by side (Lifetime + Monthly); stack on small screens. */
+.price-grid{
+  display:grid;
+  grid-template-columns:repeat(2, minmax(0, 1fr));
+  gap:var(--s-6);
+  max-width:920px;
+  margin:var(--s-10) auto 0;
+  align-items:stretch;
+}
+.price-grid .price-card{
+  max-width:none;
+  margin-top:0;
+  display:flex;
+  flex-direction:column;
+}
+.price-actions{ margin-top:auto; padding-top:var(--s-5); }   /* bottom-align the buy area so both cards match */
+.price-badge-alt::before{ background:var(--text-muted); }    /* muted dot to set the monthly card apart */
+@media (max-width:760px){
+  .price-grid{ grid-template-columns:1fr; max-width:480px; }
 }
 .price-badge{
   display:inline-flex;

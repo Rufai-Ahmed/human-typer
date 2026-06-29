@@ -48,7 +48,7 @@
                 keystrokes — natural rhythm, lifelike pauses, your speed. Not a paste. Real keys.
             </p>
             <div class="hero-cta">
-                <a href="#pricing" class="btn btn-primary btn-lg">Get it for ₦10,000 once</a>
+                <a href="#pricing" id="hero-cta" class="btn btn-primary btn-lg"><span class="cta-text">Get it for ₦10,000 once</span></a>
                 <a href="#how" class="btn btn-ghost btn-lg">See how it works</a>
             </div>
             <p class="hero-meta">
@@ -170,64 +170,74 @@
                 <p class="section-sub">Pay once and own it for life, or go month to month for ₦2,000. No auto-charges either way.</p>
             </div>
 
-            <div class="price-card">
-                <div id="price-badge" class="price-badge">Lifetime license</div>
-                <div id="price-amount" class="price-amount">₦10,000<span class="price-once"> once</span></div>
+            <div class="price-grid">
+                <!-- Lifetime card -->
+                <div class="price-card">
+                    <div class="price-badge">Lifetime license</div>
+                    <div id="price-amount-lifetime" class="price-amount">₦10,000<span class="price-once"> once</span></div>
+                    <p class="price-compare">One payment, yours forever. A fraction of what goghostwriter charges every single month.</p>
+                    <ul class="price-list">
+                        <li>Pay once, no renewals ever</li>
+                        <li>Works on macOS &amp; Windows</li>
+                        <li>Every feature, plus future updates</li>
+                        <li>One device per key</li>
+                    </ul>
 
-                <div id="plan-toggle" class="seat-options plan-toggle" role="radiogroup" aria-label="Choose a plan">
-                    <button type="button" class="seat-opt plan-opt is-active" data-plan="lifetime" role="radio" aria-checked="true">
-                        <span class="seat-qty">Lifetime</span>
-                        <span class="seat-per">one payment, yours forever</span>
-                        <span class="seat-total"><span class="num">₦10,000</span><small class="seat-save">once</small></span>
-                    </button>
-                    <button type="button" class="seat-opt plan-opt" data-plan="monthly" role="radio" aria-checked="false">
-                        <span class="seat-qty">Monthly</span>
-                        <span class="seat-per">30 days, renew anytime</span>
-                        <span class="seat-total"><span class="num">₦2,000</span><small class="seat-save">/month</small></span>
-                    </button>
-                </div>
-
-                <p class="price-compare">Pay once for life, or go month to month. Either way it is a fraction of what goghostwriter charges every month.</p>
-                <ul class="price-list">
-                    <li>Works on macOS &amp; Windows</li>
-                    <li>Every feature, plus future updates</li>
-                    <li>One device per key</li>
-                    <li>Lifetime ₦10,000 once, or ₦2,000 / month with no auto-charge</li>
-                </ul>
-
-                <div id="seat-pick" class="seat-pick">
-                    <p class="seat-pick-label"><span class="tic">▸</span> Buying for a team?</p>
-                    <p class="seat-pick-sub">Buy several keys at once at a lower price per seat. Each key activates 1 device, so you share one key per teammate.</p>
-                    <div id="seat-options" class="seat-options" role="radiogroup" aria-label="Number of seats">
-                        <button type="button" class="seat-opt is-active" data-seats="1" data-perseat="1000000" role="radio" aria-checked="true">
-                            <span class="seat-qty"><span class="num">1</span> seat</span>
-                            <span class="seat-per"><span class="num">₦10,000</span>/seat</span>
-                            <span class="seat-total"><span class="num">₦10,000</span></span>
-                        </button>
-                        <button type="button" class="seat-opt" data-seats="5" data-perseat="800000" role="radio" aria-checked="false">
-                            <span class="seat-qty"><span class="num">5</span> seats</span>
-                            <span class="seat-per"><span class="num">₦8,000</span>/seat</span>
-                            <span class="seat-total"><span class="num">₦40,000</span><small class="seat-save">save ₦10,000</small></span>
-                        </button>
-                        <button type="button" class="seat-opt" data-seats="10" data-perseat="700000" role="radio" aria-checked="false">
-                            <span class="seat-qty"><span class="num">10</span> seats</span>
-                            <span class="seat-per"><span class="num">₦7,000</span>/seat</span>
-                            <span class="seat-total"><span class="num">₦70,000</span><small class="seat-save">save ₦30,000</small></span>
-                        </button>
-                        <button type="button" class="seat-opt" data-seats="25" data-perseat="600000" role="radio" aria-checked="false">
-                            <span class="seat-qty"><span class="num">25</span> seats</span>
-                            <span class="seat-per"><span class="num">₦6,000</span>/seat</span>
-                            <span class="seat-total"><span class="num">₦150,000</span><small class="seat-save">save ₦100,000</small></span>
-                        </button>
+                    <div id="seat-pick" class="seat-pick">
+                        <p class="seat-pick-label"><span class="tic">▸</span> Buying for a team?</p>
+                        <p class="seat-pick-sub">Buy several keys at once at a lower price per seat. Each key activates 1 device, so you share one key per teammate.</p>
+                        <div id="seat-options" class="seat-options" role="radiogroup" aria-label="Number of seats">
+                            <button type="button" class="seat-opt is-active" data-seats="1" data-perseat="1000000" role="radio" aria-checked="true">
+                                <span class="seat-qty"><span class="num">1</span> seat</span>
+                                <span class="seat-per"><span class="num">₦10,000</span>/seat</span>
+                                <span class="seat-total"><span class="num">₦10,000</span></span>
+                            </button>
+                            <button type="button" class="seat-opt" data-seats="5" data-perseat="800000" role="radio" aria-checked="false">
+                                <span class="seat-qty"><span class="num">5</span> seats</span>
+                                <span class="seat-per"><span class="num">₦8,000</span>/seat</span>
+                                <span class="seat-total"><span class="num">₦40,000</span><small class="seat-save">save ₦10,000</small></span>
+                            </button>
+                            <button type="button" class="seat-opt" data-seats="10" data-perseat="700000" role="radio" aria-checked="false">
+                                <span class="seat-qty"><span class="num">10</span> seats</span>
+                                <span class="seat-per"><span class="num">₦7,000</span>/seat</span>
+                                <span class="seat-total"><span class="num">₦70,000</span><small class="seat-save">save ₦30,000</small></span>
+                            </button>
+                            <button type="button" class="seat-opt" data-seats="25" data-perseat="600000" role="radio" aria-checked="false">
+                                <span class="seat-qty"><span class="num">25</span> seats</span>
+                                <span class="seat-per"><span class="num">₦6,000</span>/seat</span>
+                                <span class="seat-total"><span class="num">₦150,000</span><small class="seat-save">save ₦100,000</small></span>
+                            </button>
+                        </div>
+                        <p class="seat-note">Each key activates 1 device. We email every key to the address below, then you hand one to each teammate.</p>
                     </div>
-                    <p class="seat-note">Each key activates 1 device. We email every key to the address below, then you hand one to each teammate.</p>
+
+                    <div class="price-actions">
+                        <input id="buyer-email-lifetime" type="email" class="price-email" placeholder="your@email.com (where we send your key)" autocomplete="email" inputmode="email">
+                        <button id="btn-buy-lifetime" class="btn btn-primary btn-lg price-buy">Buy lifetime access for ₦10,000</button>
+                        <p id="buy-msg-lifetime" class="buy-msg hidden"></p>
+                    </div>
                 </div>
 
-                <input id="buyer-email" type="email" class="price-email" placeholder="your@email.com (where we send your keys)" autocomplete="email" inputmode="email">
-                <button id="btn-buy" class="btn btn-primary btn-lg price-buy">Buy lifetime access for ₦10,000</button>
-                <p id="buy-msg" class="buy-msg hidden"></p>
-                <p class="price-foot">Secure checkout by Paystack. Your keys are emailed after payment, then you download below.</p>
+                <!-- Monthly card -->
+                <div class="price-card">
+                    <div class="price-badge price-badge-alt">Monthly pass</div>
+                    <div class="price-amount">₦2,000<span class="price-once"> / month</span></div>
+                    <p class="price-compare">Try it month to month. One payment buys 30 days; renew anytime by paying again. No auto-charge, cancel by simply not renewing.</p>
+                    <ul class="price-list">
+                        <li>30 days of full access</li>
+                        <li>Works on macOS &amp; Windows</li>
+                        <li>Renew anytime, your key just extends</li>
+                        <li>One device, no auto-charge</li>
+                    </ul>
+
+                    <div class="price-actions">
+                        <input id="buyer-email-monthly" type="email" class="price-email" placeholder="your@email.com (where we send your key)" autocomplete="email" inputmode="email">
+                        <button id="btn-buy-monthly" class="btn btn-primary btn-lg price-buy">Get 30 days for ₦2,000</button>
+                        <p id="buy-msg-monthly" class="buy-msg hidden"></p>
+                    </div>
+                </div>
             </div>
+            <p class="price-foot">Secure checkout by Paystack. Your key is emailed after payment, then you download below.</p>
         </section>
 
         <!-- Download -->
