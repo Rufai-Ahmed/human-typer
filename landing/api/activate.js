@@ -41,7 +41,7 @@ module.exports = async (req, res) => {
 
     try {
         const result = await rpc("activate_key", { p_key: key, p_device: device });
-        // activate_key returns { ok, reason? }
+        // activate_key returns { ok, reason?, plan?, expires_at? }
         res.status(200).json(result && typeof result === "object" ? result : { ok: false, reason: "invalid" });
     } catch (err) {
         res.status(502).json({ ok: false, reason: "upstream_error" });

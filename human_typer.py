@@ -427,7 +427,7 @@ ACTIVATE_URL = os.environ.get(
 
 # Bump this on every release; the app compares it to the server's latest version
 # and shows a "Download update" banner when this build is behind.
-APP_VERSION = "1.6.1"
+APP_VERSION = "1.6.2"
 VERSION_URL = os.environ.get(
     "HUMANTYPER_VERSION_URL", ACTIVATE_URL.rsplit("/api/", 1)[0] + "/api/version"
 )
@@ -554,23 +554,83 @@ def _clear_activation() -> None:
         pass
 
 
+def _write_activation(data: dict) -> None:
+    try:
+        with open(_activation_file(), "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+    except Exception:
+        pass
+
+
+def _parse_ts(s):
+    """Parse an ISO / Postgres timestamptz to epoch seconds (UTC). None if absent/bad."""
+    if not s:
+        return None
+    try:
+        from datetime import datetime, timezone
+        dt = datetime.fromisoformat(str(s).strip().replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except Exception:
+        return None
+
+
+def _is_expired(data) -> bool:
+    """True when a monthly record's stored expiry is in the past.
+
+    Lifetime records carry no expires_at, so they never expire. The expiry date lives
+    in the local activation record, which is what makes a monthly pass enforceable
+    OFFLINE: this check needs no network.
+    """
+    if not isinstance(data, dict):
+        return False
+    exp = _parse_ts(data.get("expires_at"))
+    return exp is not None and time.time() >= exp
+
+
 def is_activated() -> bool:
-    """Fast local gate: a saved activation bound to THIS machine. No network."""
+    """Fast local gate: a saved activation bound to THIS machine, not expired. No network."""
     data = _local_activation()
-    return bool(data and data.get("key") and data.get("device_id") == _machine_id())
+    return bool(
+        data and data.get("key")
+        and data.get("device_id") == _machine_id()
+        and not _is_expired(data)
+    )
 
 
 def revalidate_online() -> None:
-    """Re-check the saved key with the server; drop it if revoked/invalid/moved.
+    """Re-check the saved key with the server; sync expiry; drop it if revoked/moved.
 
-    Fail-open when offline so a buyer without internet can still use the app.
+    Fail-open when offline so a buyer without internet keeps working (a monthly pass
+    is still enforced locally from the stored expiry). On an OK re-check we copy any
+    new expires_at down, so RENEWING a monthly pass restores access on the next launch
+    with no re-entry. An 'expired' result keeps the key (paying again auto-recovers);
+    revoked / invalid / in_use means the key is dead or moved, so it is dropped.
     """
     data = _local_activation()
     if not data or not data.get("key"):
         return
     res = _post_activate(data["key"], timeout=6.0)
-    if res is not None and not res.get("ok"):
-        _clear_activation()
+    if res is None:
+        return  # offline
+    if res.get("ok"):
+        changed = False
+        for f in ("plan", "expires_at"):
+            if res.get(f) != data.get(f):
+                data[f] = res.get(f)
+                changed = True
+        if changed:
+            _write_activation(data)
+        return
+    if res.get("reason") == "expired":
+        if res.get("expires_at") and res.get("expires_at") != data.get("expires_at"):
+            data["expires_at"] = res.get("expires_at")
+            if res.get("plan"):
+                data["plan"] = res.get("plan")
+            _write_activation(data)
+        return
+    _clear_activation()
 
 
 def activate(key: str) -> dict:
@@ -582,11 +642,12 @@ def activate(key: str) -> dict:
     if res is None:
         return {"ok": False, "reason": "offline"}
     if res.get("ok"):
-        try:
-            with open(_activation_file(), "w", encoding="utf-8") as fh:
-                json.dump({"key": _normalize_key(key), "device_id": _machine_id()}, fh)
-        except Exception:
-            pass
+        rec = {"key": _normalize_key(key), "device_id": _machine_id()}
+        if res.get("plan"):
+            rec["plan"] = res.get("plan")
+        if res.get("expires_at"):
+            rec["expires_at"] = res.get("expires_at")
+        _write_activation(rec)
         return {"ok": True}
     return {"ok": False, "reason": res.get("reason", "invalid")}
 
@@ -935,8 +996,14 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         if path == "/api/license":
-            revalidate_online()   # drops the local record if the key was revoked/moved
-            self.send_json({"activated": is_activated()})
+            revalidate_online()   # drops/refreshes the local record (revoked/moved/renewed)
+            activated = is_activated()
+            payload = {"activated": activated}
+            if not activated:
+                data = _local_activation()
+                if data and _is_expired(data):
+                    payload["reason"] = "expired"   # monthly pass lapsed -> show a renew hint
+            self.send_json(payload)
         elif path == "/api/status":
             self.send_json({
                 "state": typing_status.state,

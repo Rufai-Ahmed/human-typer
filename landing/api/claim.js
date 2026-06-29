@@ -92,13 +92,46 @@ function nairaFromKobo(kobo) {
   return "NGN " + (Math.round(Number(kobo) || 0) / 100).toLocaleString("en-US");
 }
 
-function paymentAlertHtml({ email, amountKobo, reference, qty, count }) {
+function fmtDate(iso) {
+  try {
+    return new Date(iso).toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return String(iso || "");
+  }
+}
+
+function monthlyEmailHtml(key, expiresAt, downloadUrl) {
+  return `
+    <div style="font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:520px;margin:0 auto;color:#111">
+      <h2 style="margin:0 0 8px">Your Human Typer monthly pass</h2>
+      <p>Thank you! Your pass is active${
+        expiresAt ? ` until <strong>${fmtDate(expiresAt)}</strong>` : ""
+      }. Your key is below.</p>
+      <p style="font-size:20px;font-weight:700;letter-spacing:1px;background:#f4f4f8;
+                border:1px solid #e2e2ea;border-radius:10px;padding:14px 16px;text-align:center;
+                font-family:'JetBrains Mono',monospace;margin:10px 0">${key}</p>
+      <ol style="line-height:1.7">
+        <li>Download the app: <a href="${downloadUrl}">${downloadUrl}</a></li>
+        <li>Open it and paste this key on the activation screen (needs internet).</li>
+        <li>It works on one device until your pass ends. To keep going, just pay again
+            with this same email and your access extends, no new key needed.</li>
+      </ol>
+      <p style="color:#666;font-size:13px">Keep this email as your proof of purchase.
+         Need help or a new device? Reply here or contact me@rufaiahmed.com.</p>
+    </div>`;
+}
+
+function paymentAlertHtml({ email, amountKobo, reference, planLine }) {
   return `
     <div style="font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:520px;margin:0 auto;color:#111">
       <h2 style="margin:0 0 10px">New Human Typer payment</h2>
       <p style="margin:4px 0"><strong>Amount:</strong> ${nairaFromKobo(amountKobo)}</p>
       <p style="margin:4px 0"><strong>Email:</strong> ${email}</p>
-      <p style="margin:4px 0"><strong>Seats:</strong> ${count} of ${qty} key(s) delivered</p>
+      <p style="margin:4px 0"><strong>Plan:</strong> ${planLine}</p>
       <p style="margin:10px 0 0;color:#666;font-size:13px"><strong>Reference:</strong> ${reference}</p>
     </div>`;
 }
@@ -134,6 +167,17 @@ module.exports = async (req, res) => {
   }
 
   const priceKobo = parseInt(process.env.PRICE_KOBO || "1000000", 10);
+  const monthlyKobo = parseInt(process.env.MONTHLY_KOBO || "200000", 10); // ₦2,000 = 30 days
+  const monthlyDays = parseInt(process.env.MONTHLY_DAYS || "30", 10);
+  // Fail loudly on a price misconfig: if the monthly amount were >= the lifetime price,
+  // every lifetime payment would silently fulfill as a cheap monthly key (revenue loss).
+  if (monthlyKobo >= priceKobo) {
+    res.status(500).json({
+      ok: false,
+      error: "Server misconfigured: MONTHLY_KOBO must be less than PRICE_KOBO",
+    });
+    return;
+  }
   const downloadUrl =
     process.env.DOWNLOAD_URL || "https://humantyper.rufaiahmed.com#download";
 
@@ -163,14 +207,18 @@ module.exports = async (req, res) => {
     );
     const v = await vr.json();
     const tx = v && v.data;
-    const paid =
+    const amount = Number(tx && tx.amount) || 0; // kobo; coerce so === and >= agree
+    const okStatus =
       v &&
       v.status &&
       tx &&
       tx.status === "success" &&
-      tx.amount >= priceKobo &&
       (tx.currency || "NGN") === "NGN";
-    if (!paid) {
+    // The PLAN is derived ONLY from the Paystack-verified amount, never from anything
+    // the client sent: exactly ₦2,000 is a monthly pass; ₦10,000+ is a lifetime order.
+    const isMonthly = okStatus && amount === monthlyKobo;
+    const isLifetime = okStatus && amount >= priceKobo;
+    if (!okStatus || (!isMonthly && !isLifetime)) {
       res.status(200).json({ ok: false, status: "not_a_successful_payment" });
       return;
     }
@@ -181,8 +229,76 @@ module.exports = async (req, res) => {
       return;
     }
 
+    // Owner alert for any NEW payment (best-effort, once per reference).
+    const alertOwner = async (planLine) => {
+      try {
+        await sendEmail(
+          process.env.PAYMENT_ALERT_EMAIL || "payment@rufaiahmed.com",
+          `New Human Typer payment: ${nairaFromKobo(amount)} from ${email}`,
+          paymentAlertHtml({ email, amountKobo: amount, reference, planLine }),
+        );
+      } catch (_) {}
+    };
+
+    // ===== Monthly pass: 30 days per ₦2,000, renews by paying again =====
+    if (isMonthly) {
+      const claim = await rpc("claim_or_renew_monthly", {
+        p_email: email,
+        p_ref: reference,
+        p_days: monthlyDays,
+      });
+      const key = claim && claim.key;
+      const expiresAt = claim && claim.expires_at;
+      const isNew = !claim || claim.new !== false;
+
+      if (isNew) {
+        await alertOwner(
+          `Monthly pass (${monthlyDays} days)${
+            expiresAt ? `, active until ${fmtDate(expiresAt)}` : ""
+          }`,
+        );
+      }
+      if (!key) {
+        try {
+          await sendEmail(
+            process.env.ADMIN_EMAIL || "me@rufaiahmed.com",
+            "Human Typer: license key pool is EMPTY",
+            `<p>Paid monthly order ${reference} (${email}) could not be fulfilled; no unsold keys left. Add keys + re-seed Supabase, then issue manually.</p>`,
+          );
+        } catch (_) {}
+        res.status(200).json({ ok: false, status: "out_of_keys", email });
+        return;
+      }
+      if (!isNew) {
+        res.status(200).json({
+          ok: true,
+          status: "already_processed",
+          email,
+          plan: "monthly",
+          count: 1,
+          expires_at: expiresAt,
+        });
+        return;
+      }
+      await sendEmail(
+        email,
+        "Your Human Typer monthly pass",
+        monthlyEmailHtml(key, expiresAt, downloadUrl),
+      );
+      res.status(200).json({
+        ok: true,
+        status: "key_sent",
+        email,
+        plan: "monthly",
+        count: 1,
+        expires_at: expiresAt,
+      });
+      return;
+    }
+
+    // ===== Lifetime: one-time single or team/volume packs =====
     // How many keys this payment is owed, from the VERIFIED amount only.
-    const qty = seatsForAmount(tx.amount);
+    const qty = seatsForAmount(amount);
 
     // Atomically claim up to `qty` unsold keys. Idempotent per reference: a repeat
     // call for the same payment returns the SAME keys and never allocates more.
@@ -194,17 +310,8 @@ module.exports = async (req, res) => {
     const keys = (claim && claim.keys) || [];
     const count = keys.length;
 
-    // Notify the owner of every NEW payment, with the buyer email and amount.
-    // Gated on claim.new so the duplicate hit (browser + Paystack webhook fire the
-    // same reference) only alerts once. Best-effort: never blocks key delivery.
     if (!claim || claim.new !== false) {
-      try {
-        await sendEmail(
-          process.env.PAYMENT_ALERT_EMAIL || "payment@rufaiahmed.com",
-          `New Human Typer payment: ${nairaFromKobo(tx.amount)} from ${email}`,
-          paymentAlertHtml({ email, amountKobo: tx.amount, reference, qty, count }),
-        );
-      } catch (_) {}
+      await alertOwner(`Lifetime, ${count} of ${qty} key(s) delivered`);
     }
 
     if (count === 0) {
@@ -222,7 +329,7 @@ module.exports = async (req, res) => {
     if (claim.new === false) {
       res
         .status(200)
-        .json({ ok: true, status: "already_processed", email, count });
+        .json({ ok: true, status: "already_processed", email, plan: "lifetime", count });
       return;
     }
 
@@ -242,7 +349,7 @@ module.exports = async (req, res) => {
         ? `Your ${count} Human Typer license keys`
         : "Your Human Typer license key";
     await sendEmail(email, subject, keysEmailHtml(keys, downloadUrl));
-    res.status(200).json({ ok: true, status: "key_sent", email, count });
+    res.status(200).json({ ok: true, status: "key_sent", email, plan: "lifetime", count });
   } catch (err) {
     // Let Paystack retry on transient failures.
     res

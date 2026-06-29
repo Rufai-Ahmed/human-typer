@@ -86,7 +86,14 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const res = await fetch('/api/license');
             const data = await res.json();
-            if (data.activated) { checkAccess(); } else { showGate(); }
+            if (data.activated) {
+                checkAccess();
+            } else {
+                showGate();
+                if (data.reason === 'expired') {
+                    showLicenseError('Your monthly pass has ended. Renew at humantyper.rufaiahmed.com with the same email, then paste your key here to continue.');
+                }
+            }
         } catch (err) {
             showGate();
         }

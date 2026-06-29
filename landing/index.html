@@ -166,22 +166,36 @@
         <section id="pricing" class="section pricing">
             <div class="section-head">
                 <p class="eyebrow"><span class="tic">▸</span> Pricing</p>
-                <h2 class="section-title">One price. Forever.</h2>
-                <p class="section-sub">Others charge you every month. Human Typer is a single payment — pay once, own it for life.</p>
+                <h2 class="section-title">Simple pricing.</h2>
+                <p class="section-sub">Pay once and own it for life, or go month to month for ₦2,000. No auto-charges either way.</p>
             </div>
 
             <div class="price-card">
-                <div class="price-badge">Lifetime license</div>
+                <div id="price-badge" class="price-badge">Lifetime license</div>
                 <div id="price-amount" class="price-amount">₦10,000<span class="price-once"> once</span></div>
-                <p class="price-compare">goghostwriter bills <strong>every month</strong>. This is <strong>one payment, forever</strong>, and it pays for itself in the first month.</p>
+
+                <div id="plan-toggle" class="seat-options plan-toggle" role="radiogroup" aria-label="Choose a plan">
+                    <button type="button" class="seat-opt plan-opt is-active" data-plan="lifetime" role="radio" aria-checked="true">
+                        <span class="seat-qty">Lifetime</span>
+                        <span class="seat-per">one payment, yours forever</span>
+                        <span class="seat-total"><span class="num">₦10,000</span><small class="seat-save">once</small></span>
+                    </button>
+                    <button type="button" class="seat-opt plan-opt" data-plan="monthly" role="radio" aria-checked="false">
+                        <span class="seat-qty">Monthly</span>
+                        <span class="seat-per">30 days, renew anytime</span>
+                        <span class="seat-total"><span class="num">₦2,000</span><small class="seat-save">/month</small></span>
+                    </button>
+                </div>
+
+                <p class="price-compare">Pay once for life, or go month to month. Either way it is a fraction of what goghostwriter charges every month.</p>
                 <ul class="price-list">
-                    <li>Lifetime license key (no renewals)</li>
                     <li>Works on macOS &amp; Windows</li>
                     <li>Every feature, plus future updates</li>
-                    <li>No monthly fees, ever</li>
+                    <li>One device per key</li>
+                    <li>Lifetime ₦10,000 once, or ₦2,000 / month with no auto-charge</li>
                 </ul>
 
-                <div class="seat-pick">
+                <div id="seat-pick" class="seat-pick">
                     <p class="seat-pick-label"><span class="tic">▸</span> Buying for a team?</p>
                     <p class="seat-pick-sub">Buy several keys at once at a lower price per seat. Each key activates 1 device, so you share one key per teammate.</p>
                     <div id="seat-options" class="seat-options" role="radiogroup" aria-label="Number of seats">
