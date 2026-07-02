@@ -18,14 +18,19 @@ hiddenimports = []                # keys are validated online now, nothing to em
 
 # Pull in pywebview and its platform webview backend (pyobjc on macOS,
 # pythonnet/WebView2 on Windows). Skipped gracefully if not installed.
-try:
-    from PyInstaller.utils.hooks import collect_all
-    _d, _b, _h = collect_all('webview')
-    datas += _d
-    binaries += _b
-    hiddenimports += _h
-except Exception as exc:  # pragma: no cover
-    print(f"[spec] pywebview not collected ({exc}); native window may be unavailable.")
+# certifi carries the CA roots the app falls back to when the OS store is stale.
+_collect = ['webview', 'certifi']
+if sys.platform.startswith('win'):
+    _collect += ['clr_loader', 'pythonnet']   # pywebview's WinForms/WebView2 backend
+for _pkg in _collect:
+    try:
+        from PyInstaller.utils.hooks import collect_all
+        _d, _b, _h = collect_all(_pkg)
+        datas += _d
+        binaries += _b
+        hiddenimports += _h
+    except Exception as exc:  # pragma: no cover
+        print(f"[spec] {_pkg} not collected ({exc}).")
 
 a = Analysis(
     ['human_typer.py'],
@@ -86,8 +91,8 @@ if sys.platform == 'darwin':
         info_plist={
             'CFBundleName': 'Human Typer',
             'CFBundleDisplayName': 'Human Typer',
-            'CFBundleShortVersionString': '1.6.2',
-            'CFBundleVersion': '1.6.2',
+            'CFBundleShortVersionString': '1.6.3',
+            'CFBundleVersion': '1.6.3',
             'NSHighResolutionCapable': True,
             'LSMinimumSystemVersion': '10.13.0',
             'NSHumanReadableCopyright': '© Human Typer',

@@ -27,6 +27,7 @@ import json
 import math
 import os
 import random
+import ssl
 import subprocess
 import sys
 import threading
@@ -427,7 +428,7 @@ ACTIVATE_URL = os.environ.get(
 
 # Bump this on every release; the app compares it to the server's latest version
 # and shows a "Download update" banner when this build is behind.
-APP_VERSION = "1.6.2"
+APP_VERSION = "1.6.3"
 VERSION_URL = os.environ.get(
     "HUMANTYPER_VERSION_URL", ACTIVATE_URL.rsplit("/api/", 1)[0] + "/api/version"
 )
@@ -516,26 +517,50 @@ def _machine_id() -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+# Last low-level network failure, surfaced to the GUI with the 'offline' message
+# so a buyer's "no internet" report tells us WHY (e.g. an SSL verify failure).
+_last_net_error = ""
+
+
+def _ssl_context():
+    """TLS context trusting the OS store PLUS certifi's bundled roots.
+
+    Old or unpatched Windows machines often lack newer roots (e.g. ISRG Root X1
+    behind this domain's cert) and, unlike browsers, Python never fetches missing
+    roots on demand — so activation there fails as 'offline' despite a working
+    connection. certifi ships the current Mozilla roots inside the app.
+    """
+    ctx = ssl.create_default_context()
+    try:
+        import certifi
+        ctx.load_verify_locations(certifi.where())
+    except Exception:
+        pass
+    return ctx
+
+
 def _post_activate(key: str, timeout: float = 12.0):
     """Ask the server to activate/re-check a key for this device.
 
     Returns {"ok": True} / {"ok": False, "reason": "..."}, or None if the server
     is unreachable (offline).
     """
+    global _last_net_error
     payload = json.dumps({"key": key, "device_id": _machine_id()}).encode("utf-8")
     req = urllib.request.Request(
         ACTIVATE_URL, data=payload,
         headers={"Content-Type": "application/json"}, method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         try:
             return json.loads(e.read().decode("utf-8"))
         except Exception:
             return {"ok": False, "reason": "invalid"}
-    except Exception:
+    except Exception as e:
+        _last_net_error = str(e) or e.__class__.__name__
         return None  # offline / network error
 
 
@@ -640,7 +665,7 @@ def activate(key: str) -> dict:
         return {"ok": False, "reason": "missing"}
     res = _post_activate(key)
     if res is None:
-        return {"ok": False, "reason": "offline"}
+        return {"ok": False, "reason": "offline", "detail": _last_net_error}
     if res.get("ok"):
         rec = {"key": _normalize_key(key), "device_id": _machine_id()}
         if res.get("plan"):
@@ -667,7 +692,7 @@ def check_update() -> dict:
     """
     try:
         req = urllib.request.Request(VERSION_URL, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=6) as resp:
+        with urllib.request.urlopen(req, timeout=6, context=_ssl_context()) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         latest = data.get("version") or ""
         downloads = data.get("downloads") or {}
@@ -1040,7 +1065,9 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
             try:
                 params = json.loads(body)
                 result = activate(params.get("key", ""))
-                self.send_json({"activated": bool(result.get("ok")), "reason": result.get("reason", "")})
+                self.send_json({"activated": bool(result.get("ok")),
+                                "reason": result.get("reason", ""),
+                                "detail": result.get("detail", "")})
             except Exception as e:
                 self.send_json({"activated": False, "reason": "error", "error": str(e)}, 400)
 

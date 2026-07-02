@@ -173,7 +173,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 licenseError.classList.add('hidden');
                 showApp();
             } else {
-                showLicenseError(reasonMessage(data.reason));
+                // For 'offline' the server passes the low-level error along; showing it
+                // turns a buyer's "no internet" report into something diagnosable.
+                showLicenseError(reasonMessage(data.reason)
+                    + (data.detail ? ' [' + data.detail + ']' : ''));
             }
         } catch (err) {
             showLicenseError('Could not reach the activation engine.');
