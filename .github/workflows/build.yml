@@ -49,6 +49,17 @@ jobs:
       - name: Build the app
         run: python -m PyInstaller --noconfirm --clean HumanTyper.spec
 
+      - name: Gate on the frozen bundle's self-check
+        # The built exe must be able to import its native-window stack (webview,
+        # clr, clr_loader) from INSIDE the frozen bundle, or buyers get the
+        # browser-fallback experience. --diag exits non-zero on a broken bundle.
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist/HumanTyper/HumanTyper.exe" `
+                 -ArgumentList "--diag","--diag-out","diag.json" -Wait -PassThru
+          if (Test-Path diag.json) { Get-Content diag.json } else { Write-Error "diag.json was not written"; exit 1 }
+          if ($p.ExitCode -ne 0) { Write-Error "frozen bundle failed its self-check (exit $($p.ExitCode))"; exit 1 }
+
       - name: Package
         run: Compress-Archive -Path dist/HumanTyper -DestinationPath "HumanTyper-Windows.zip" -Force
 
@@ -97,6 +108,14 @@ jobs:
           echo "archs: $(lipo -archs "$BIN")"
           lipo -archs "$BIN" | grep -q x86_64 && lipo -archs "$BIN" | grep -q arm64 \
             || { echo "ERROR: not a universal binary"; exit 1; }
+
+      - name: Gate on the frozen bundle's self-check
+        # Print the report even when the check fails, so the log shows WHY.
+        run: |
+          status=0
+          "dist/Human Typer.app/Contents/MacOS/HumanTyper" --diag --diag-out diag.json || status=$?
+          cat diag.json || true
+          exit $status
 
       - name: Sign & notarize
         # No-op (unsigned) unless the Apple secrets are set, so this never breaks builds.

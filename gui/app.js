@@ -401,7 +401,10 @@ document.addEventListener('DOMContentLoaded', () => {
     function finishRun(state) { if (runResolve) { const r = runResolve; runResolve = null; r(state || 'done'); } }
 
     // Runs one document end-to-end; resolves with the final state ('done'/'aborted'/'error').
-    function beginTyping(rawText) {
+    // opts.captureGui=false: the user is already sitting in their target (queue items
+    // after the first), so the run must NOT wait for them to switch away from it.
+    function beginTyping(rawText, opts) {
+        const captureGui = !(opts && opts.captureGui === false);
         return new Promise((resolve) => {
             runResolve = resolve;
             sandboxMode = false;
@@ -424,7 +427,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const payload = JSON.stringify({ text, delay_ms, humanize, typos, delay,
                 variance: advanced.variance, word_pause: advanced.word_pause,
                 sentence_pause: advanced.sentence_pause, hesitation_prob: advanced.hesitation_prob,
-                hesitation: advanced.hesitation });
+                hesitation: advanced.hesitation, capture_gui: captureGui });
             const fail = (msg) => { alert(msg); typingOverlay.classList.add('hidden'); finishRun('error'); };
             const attemptStart = (isRetry) => {
                 fetch('/api/type', {
@@ -497,9 +500,11 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
         const items = queue.slice();
+        let first = true;
         for (const item of items) {
             if (!queueRunning) break;
-            const st = await beginTyping(item);
+            const st = await beginTyping(item, { captureGui: first });
+            first = false;
             if (st === 'aborted' || st === 'error') break;
         }
         queue = []; queueRunning = false; renderQueue();
@@ -645,10 +650,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 const waiting = data.pause_reason === 'waiting';
                 overlayTitle.textContent = waiting ? 'Where should it type?' : 'Paused';
                 overlayInstruction.textContent = waiting
-                    ? 'Click into the app or field where the text should go. Typing starts there automatically.'
+                    ? 'Click into the app or field where the text should go. Typing starts there a moment later.'
                     : data.pause_reason === 'focus'
-                        ? 'You switched away from your target window. Click back into it, then Resume.'
-                        : 'Paused. Resume when you are ready.';
+                        ? 'You switched away from your target window. Press Resume, then click back into it.'
+                        : 'Paused. Press Resume, then click into your target.';
                 btnPause.classList.add('hidden');
                 btnResume.classList.toggle('hidden', waiting);
             }
@@ -712,4 +717,8 @@ document.addEventListener('DOMContentLoaded', () => {
     loadProfiles();
     checkLicense();
     checkForUpdate();
+    // Heartbeat: lets the engine tell "window still open" from "orphaned" when it
+    // can't own the window process (Edge app-mode handoff). Top-level so the
+    // license/access gates keep it alive too, not just the unlocked app.
+    setInterval(() => { fetch('/api/permissions').catch(() => {}); }, 45000);
 });

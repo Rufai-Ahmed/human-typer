@@ -26,6 +26,7 @@ import hashlib
 import json
 import math
 import os
+import platform
 import random
 import ssl
 import subprocess
@@ -182,10 +183,13 @@ class TypingState:
     focus_guard: bool = True     # auto-pause if the frontmost app changes mid-run
     focus_target: object = None  # token for the app focused when typing began
     gui_token: object = None     # token for our own window when Start was clicked
+    waiting_since: float = 0.0   # monotonic time the "waiting" pause began
+    run_id: int = 0              # bumped per /api/type; guards stale watcher commits
 
 typing_status = TypingState()
 typing_status.cancel_event = threading.Event()
 typing_status.pause_event = threading.Event()
+_start_lock = threading.Lock()   # serializes the /api/type check-and-start
 
 
 # --- Global emergency stop --------------------------------------------------
@@ -197,17 +201,55 @@ _event_tap_port = [None]   # the live CFMachPort, so the callback can re-arm the
 
 
 def _frontmost_token():
-    """A comparable token for the frontmost app/window (None = unknown, fail-open)."""
+    """A comparable token for the frontmost app/window (None = unknown, fail-open).
+
+    On Windows this is (hwnd, window title): browser TABS share one hwnd, so the
+    title is what lets a run started from our page in one Edge tab target a form
+    in ANOTHER tab of the same window. Compare with _token_core() when only the
+    window identity matters (titles change while pages load or docs autosave).
+    """
     try:
         if IS_MAC:
             out = subprocess.run(["lsappinfo", "front"], capture_output=True,
                                  text=True, timeout=1).stdout.strip()
             return out or None
         if sys.platform.startswith("win"):
-            return int(ctypes.windll.user32.GetForegroundWindow())
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            if not hwnd:
+                return None
+            buf = ctypes.create_unicode_buffer(256)
+            ctypes.windll.user32.GetWindowTextW(hwnd, buf, 256)
+            return (int(hwnd), buf.value)
     except Exception:
         return None
     return None
+
+
+def _token_core(tok):
+    """The window-level part of a focus token (drops the title on Windows)."""
+    return tok[0] if isinstance(tok, tuple) else tok
+
+
+# Windows shell surfaces that are momentarily "foreground" while the user is on
+# their way somewhere else. Locking a run onto one of these would inject keys
+# into the alt-tab switcher or the Start menu search box.
+_WIN_TRANSIENT_CLASSES = {
+    "XamlExplorerHostIslandWindow", "MultitaskingViewFrame", "ForegroundStaging",
+    "TaskSwitcherWnd", "TaskListThumbnailWnd", "Shell_TrayWnd",
+    "Windows.UI.Core.CoreWindow",
+}
+
+
+def _is_transient_surface(tok) -> bool:
+    """True when tok is a Windows shell surface no run should ever target."""
+    if not (isinstance(tok, tuple) and sys.platform.startswith("win")):
+        return False
+    try:
+        buf = ctypes.create_unicode_buffer(128)
+        ctypes.windll.user32.GetClassNameW(tok[0], buf, 128)
+        return buf.value in _WIN_TRANSIENT_CLASSES
+    except Exception:
+        return False
 
 
 def _focus_watcher() -> None:
@@ -217,11 +259,18 @@ def _focus_watcher() -> None:
     before pausing, so a transient blip (a menu, a notification) doesn't pause.
     """
     miss = 0
+    cand, cand_hits = None, 0   # waiting-state landing candidate + stability count
     while True:
         s = typing_status
         if s.state == "typing" and s.focus_guard and s.focus_target is not None and not s.pause_event.is_set():
+            # Guard on the WINDOW only (token core): a page title changing mid-run
+            # (loading spinners, autosave marks) must not read as a focus switch.
+            # Exception: an exact match on our OWN token (same window, our tab
+            # title) means the user came back to the GUI tab -- that must pause,
+            # or we'd type into our own page.
             tok = _frontmost_token()
-            if tok is not None and tok != s.focus_target:
+            if tok is not None and (_token_core(tok) != _token_core(s.focus_target)
+                                    or (s.gui_token is not None and tok == s.gui_token)):
                 miss += 1
                 if miss >= 2:
                     s.pause_reason = "focus"
@@ -231,17 +280,53 @@ def _focus_watcher() -> None:
                 miss = 0
             time.sleep(0.45)
         elif s.state == "paused" and s.pause_reason == "waiting" and s.pause_event.is_set():
-            # Run started while our own window was still frontmost: lock onto the
-            # first OTHER app the user lands in and let typing begin there.
+            # Run started while our own window/tab was still frontmost: lock onto
+            # the first OTHER app -- or other TAB (full-token compare catches a
+            # title change within the same window) -- and let typing begin there.
+            # The landing WINDOW (token core) must hold for two polls so transient
+            # surfaces are never mistaken for the target; the freshest full token
+            # is what gets committed (page titles may tick while we count).
             tok = _frontmost_token()
-            if tok is not None and tok != s.gui_token:
-                s.focus_target = tok
-                s.pause_reason = ""
-                s.pause_event.clear()
+            if tok is not None and tok != s.gui_token and not _is_transient_surface(tok):
+                if cand is not None and _token_core(tok) == _token_core(cand):
+                    cand_hits += 1
+                else:
+                    cand_hits = 1
+                cand = tok
+                if cand_hits >= 2:
+                    run = s.run_id
+                    time.sleep(0.9)   # a beat to click into the exact field
+                    # Commit atomically AFTER the grace beat, onto where the user
+                    # REALLY is now (they may have moved during the beat), and only
+                    # for the run this decision was made for: an abort + instant
+                    # restart (or a /api/resume) during the sleep must not be
+                    # released by a stale landing. Until then the GUI keeps showing
+                    # the waiting copy, so no Resume button can race us.
+                    cur = _frontmost_token()
+                    if (s.run_id == run and s.pause_reason == "waiting"
+                            and not s.cancel_event.is_set()
+                            and cur is not None
+                            and _token_core(cur) == _token_core(cand)
+                            and cur != s.gui_token
+                            and not _is_transient_surface(cur)):
+                        s.focus_target = cur
+                        s.pause_reason = ""
+                        s.pause_event.clear()
+                    cand, cand_hits = None, 0
+            else:
+                cand, cand_hits = None, 0
+            if (s.pause_event.is_set() and s.pause_reason == "waiting"
+                    and s.waiting_since and time.monotonic() - s.waiting_since > 45):
+                # Never landed anywhere detectable: degrade to a normal pause the
+                # user can Resume, instead of killing the run (which would also
+                # discard any queued documents behind it).
+                s.pause_reason = "manual"
+                s.waiting_since = 0.0
             miss = 0
             time.sleep(0.3)
         else:
             miss = 0
+            cand, cand_hits = None, 0
             time.sleep(0.3)
 
 
@@ -275,16 +360,24 @@ def _fire_quick_type() -> None:
     """Type the clipboard into the focused field, no window raise, 1s lead-in."""
     if not is_activated() or not accessibility_ok():
         return
-    if typing_status.state in ("countdown", "typing", "paused"):
-        return
     try:
         text = read_clipboard()
     except Exception:
         return
     if not text or not text.strip():
         return
-    typing_status.focus_guard = False   # quick-type goes wherever you already are
-    threading.Thread(target=type_text, args=(text, TypingProfile(), 1.0, True), daemon=True).start()
+    # Same claim discipline as /api/type, so a hotkey firing the instant the user
+    # clicks Start can't spawn a second interleaved typing thread.
+    with _start_lock:
+        if typing_status.state in ("countdown", "typing", "paused"):
+            return
+        typing_status.state = "countdown"
+        typing_status.focus_guard = False   # quick-type goes wherever you already are
+        typing_status.run_id += 1
+        try:
+            threading.Thread(target=type_text, args=(text, TypingProfile(), 1.0, True), daemon=True).start()
+        except Exception:
+            typing_status.state = "idle"
 
 
 def _hotkey_watcher() -> None:
@@ -439,7 +532,7 @@ ACTIVATE_URL = os.environ.get(
 
 # Bump this on every release; the app compares it to the server's latest version
 # and shows a "Download update" banner when this build is behind.
-APP_VERSION = "1.6.4"
+APP_VERSION = "1.6.5"
 VERSION_URL = os.environ.get(
     "HUMANTYPER_VERSION_URL", ACTIVATE_URL.rsplit("/api/", 1)[0] + "/api/version"
 )
@@ -459,6 +552,23 @@ def _config_dir() -> str:
 
 def _profiles_file() -> str:
     return os.path.join(_config_dir(), "profiles.json")
+
+
+def _log_launch(msg: str) -> None:
+    """Append a line to launch.log in the config dir (support/debug breadcrumbs).
+
+    A windowed build has no console, so this file is the only place launch
+    problems (like the native window failing) leave a trace a buyer can send us.
+    """
+    try:
+        path = os.path.join(_config_dir(), "launch.log")
+        if os.path.exists(path) and os.path.getsize(path) > 65536:
+            os.remove(path)  # keep it tiny; it's a breadcrumb file, not a journal
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(f"[{stamp}] v{APP_VERSION} {msg}\n")
+    except Exception:
+        pass
 
 
 def load_user_profiles() -> dict:
@@ -935,15 +1045,21 @@ def type_text(text: str, profile: TypingProfile, countdown: float, is_gui: bool 
         typing_status.countdown_remaining = 0.0
         if typing_status.focus_guard:
             tok = _frontmost_token()
-            if tok is not None and tok == typing_status.gui_token:
+            on_gui = tok is not None and tok == typing_status.gui_token
+            manual_hold = (typing_status.pause_event.is_set()
+                           and typing_status.pause_reason == "manual")
+            if on_gui and not manual_hold:
                 # The countdown ran out with our own window still frontmost: instead
                 # of typing into ourselves, hold in a "waiting" pause. The focus
                 # watcher locks onto the first app the user switches to and resumes.
                 typing_status.pause_reason = "waiting"
+                typing_status.waiting_since = time.monotonic()
                 typing_status.pause_event.set()
                 typing_status.focus_target = None
             else:
-                typing_status.focus_target = tok
+                # An explicit Pause pressed during the countdown must survive it,
+                # so never overwrite a manual hold with the waiting state.
+                typing_status.focus_target = None if on_gui else tok
 
     start = time.perf_counter()
     prev = ""
@@ -1033,11 +1149,15 @@ def _resource_dir() -> str:
     return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 
 
+_last_gui_request = [0.0]   # monotonic time of the last GUI request (idle watchdog)
+
+
 class GUIRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass  # suppress server logging
 
     def do_GET(self):
+        _last_gui_request[0] = time.monotonic()
         parsed = urlparse(self.path)
         path = parsed.path
         if path == "/api/license":
@@ -1079,6 +1199,7 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
             self.send_error(404, "File Not Found")
 
     def do_POST(self):
+        _last_gui_request[0] = time.monotonic()
         parsed = urlparse(self.path)
         if parsed.path == "/api/license/activate":
             body = self._read_body()
@@ -1110,10 +1231,6 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
                     self.send_json({"error": "Empty text"}, 400)
                     return
 
-                if typing_status.state in ("countdown", "typing", "paused"):
-                    self.send_json({"error": "Already typing"}, 400)
-                    return
-
                 # Forward the full humanize parameter set (Personas drive all of these).
                 _d = TypingProfile()
                 profile = TypingProfile(
@@ -1128,17 +1245,34 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
                     typo_prob=(float(params.get("typos", _d.typo_prob)) if humanize else 0.0),
                     pauses=bool(params.get("pauses", humanize)),
                 )
-                typing_status.focus_guard = focus_guard
-                # Our own window is frontmost right now (the user just clicked Start
-                # in it); remember it so the run never locks onto it as the target.
-                typing_status.gui_token = _frontmost_token()
 
-                t = threading.Thread(
-                    target=type_text,
-                    args=(text, profile, delay, True),
-                    daemon=True
-                )
-                t.start()
+                # The server is threaded: serialize the busy-check and thread start
+                # so two concurrent /api/type calls can't both pass the check.
+                with _start_lock:
+                    if typing_status.state in ("countdown", "typing", "paused"):
+                        self.send_json({"error": "Already typing"}, 400)
+                        return
+                    typing_status.state = "countdown"   # claim the slot before the thread spins up
+                    typing_status.focus_guard = focus_guard
+                    # Our own window is frontmost right now (the user just clicked
+                    # Start in it); remember it so the run never locks onto it as
+                    # the target. capture_gui:false (queue items after the first)
+                    # means "don't recapture": the user is likely IN their target,
+                    # and the retained token still protects our window if not.
+                    if bool(params.get("capture_gui", True)):
+                        typing_status.gui_token = _frontmost_token()
+                    typing_status.run_id += 1
+
+                    try:
+                        t = threading.Thread(
+                            target=type_text,
+                            args=(text, profile, delay, True),
+                            daemon=True
+                        )
+                        t.start()
+                    except Exception:
+                        typing_status.state = "idle"   # release the claimed slot
+                        raise
 
                 self.send_json({"status": "started"})
             except Exception as e:
@@ -1155,10 +1289,18 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True})
 
         elif parsed.path == "/api/resume":
-            typing_status.pause_event.clear()
-            typing_status.pause_reason = ""
             if typing_status.focus_guard:
-                typing_status.focus_target = _frontmost_token()  # re-lock to current front
+                # Resume is clicked inside OUR window, so "current front" is us.
+                # Re-enter the waiting pause: the watcher locks onto wherever the
+                # user lands next and typing continues there.
+                typing_status.gui_token = _frontmost_token()
+                typing_status.focus_target = None
+                typing_status.pause_reason = "waiting"
+                typing_status.waiting_since = time.monotonic()
+                # pause_event stays set; the focus watcher clears it on landing.
+            else:
+                typing_status.pause_event.clear()
+                typing_status.pause_reason = ""
             self.send_json({"ok": True})
 
         elif parsed.path == "/api/open-download":
@@ -1294,11 +1436,66 @@ def _bind_server(port):
     sys.exit("Could not find a free port to run the app server.")
 
 
+def _unblock_bundle() -> None:
+    """Strip Mark-of-the-Web from our own bundled DLLs (Windows, frozen only).
+
+    A zip downloaded in a browser carries a Zone.Identifier stream that Extract
+    All propagates onto every file. .NET Framework then REFUSES to load our
+    bundled Python.Runtime.dll, so the native window dies on machines that are
+    otherwise perfectly healthy (pyinstaller#8294) — while dev boxes and CI,
+    whose files were never downloaded, work fine. Deleting the stream is exactly
+    what Explorer's "Unblock" checkbox does.
+    """
+    if not (sys.platform.startswith("win") and getattr(sys, "frozen", False)):
+        return
+    root = os.path.dirname(sys.executable)
+    cleared = 0
+    try:
+        for dirpath, _dirs, files in os.walk(root):
+            for name in files:
+                if not name.lower().endswith((".dll", ".exe", ".pyd", ".json")):
+                    continue
+                try:
+                    os.remove(os.path.join(dirpath, name) + ":Zone.Identifier")
+                    cleared += 1
+                except OSError:
+                    pass  # no stream on this file (the usual case)
+        if cleared:
+            _log_launch(f"unblocked {cleared} bundle file(s) (Mark-of-the-Web)")
+    except Exception as exc:
+        _log_launch(f"unblock scan failed: {exc!r}")
+
+
+def _edge_path():
+    """Locate msedge.exe (guaranteed present on Windows 10/11)."""
+    for c in (
+        os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%LocalAppData%\Microsoft\Edge\Application\msedge.exe"),
+    ):
+        if os.path.exists(c):
+            return c
+    try:
+        import winreg
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe",
+        ) as k:
+            p = winreg.QueryValueEx(k, None)[0]
+            if p and os.path.exists(p):
+                return p
+    except Exception:
+        pass
+    return None
+
+
 def run_app(port=5000, force_browser=False):
     """Run the engine server and present the UI in a native desktop window.
 
-    Uses pywebview for a real window (WKWebView on macOS, WebView2 on Windows),
-    falling back to the system browser if pywebview is unavailable.
+    Window strategy: pywebview (WKWebView on macOS, WebView2 on Windows); if that
+    fails on Windows, an Edge "--app" window (chromeless, looks native, and Edge is
+    guaranteed on Windows 10/11); last resort, a plain browser tab. Every fallback
+    is logged to launch.log so a buyer's machine can tell us what went wrong.
     """
     httpd, p = _bind_server(port)
     url = f"http://127.0.0.1:{p}"
@@ -1307,6 +1504,12 @@ def run_app(port=5000, force_browser=False):
 
     if not force_browser:
         try:
+            _unblock_bundle()   # MOTW-blocked DLLs are the #1 frozen-only failure
+            if sys.platform.startswith("win"):
+                # pywebview silently retries with coreclr when netfx fails, which
+                # masks the real error AND needs a .NET Core install the buyer
+                # won't have. Win10/11 ship .NET Framework 4.8: pin netfx.
+                os.environ.setdefault("PYTHONNET_RUNTIME", "netfx")
             import webview
             webview.create_window(
                 "Human Typer",
@@ -1318,22 +1521,150 @@ def run_app(port=5000, force_browser=False):
             )
             webview.start()
             return
-        except ImportError:
+        except ImportError as exc:
+            _log_launch(f"pywebview import failed: {exc!r}")
             print("pywebview not installed — opening in your browser instead.")
             print("For the native app window, run: pip install pywebview")
         except Exception as exc:
+            _log_launch(f"native window failed: {exc!r}")
             print(f"Native window unavailable ({exc}); opening in your browser instead.")
+
+    edge_proc = None
+    if not force_browser and sys.platform.startswith("win"):
+        edge = _edge_path()
+        if edge:
+            try:
+                # A dedicated profile dir forces a NEW Edge process (not a handoff
+                # to a running instance), so this window looks and lives like a
+                # native app: our PID is the window, and its exit means "closed".
+                # Per-PORT dir so a second app launch (which binds the next port)
+                # gets its own Edge process too. Local, not roaming: Chromium
+                # profiles are big and not roaming-safe.
+                base = os.environ.get("LOCALAPPDATA") or _config_dir()
+                profile = os.path.join(base, "HumanTyper", f"edge-profile-{p}")
+                edge_proc = subprocess.Popen([
+                    edge, f"--app={url}", f"--user-data-dir={profile}",
+                    "--no-first-run", "--no-default-browser-check",
+                    "--disable-sync", "--new-window", "--window-size=1200,900",
+                    "--disk-cache-size=10485760",
+                ])
+                _log_launch("opened as an Edge app window")
+            except Exception as exc:
+                edge_proc = None
+                _log_launch(f"edge app window failed: {exc!r}")
+    if edge_proc is None:
+        _log_launch("opened in the default browser")
+        webbrowser.open(url)
 
     print(f"Human Typer is running at {url}")
     print("Press Ctrl-C here to quit.")
-    webbrowser.open(url)
     try:
-        while True:
-            time.sleep(1)
+        if edge_proc is not None:
+            t0 = time.monotonic()
+            edge_proc.wait()    # app-window closed -> quit like a native app would
+            if time.monotonic() - t0 < 5:
+                # Exited instantly: Edge handed the URL to another process despite
+                # the dedicated profile (e.g. an enterprise UserDataDir policy).
+                # Keep serving while the GUI shows signs of life (it pings every
+                # 45s), then exit instead of lingering invisibly forever.
+                _log_launch("edge app process exited immediately; watching GUI activity")
+                baseline = _last_gui_request[0]
+                while True:
+                    time.sleep(15)
+                    last = _last_gui_request[0]
+                    if last == baseline and time.monotonic() - t0 > 180:
+                        # No window ever talked to us after the handoff.
+                        _log_launch("no GUI connected after handoff; exiting")
+                        break
+                    if last != baseline and time.monotonic() - last > 1800:
+                        _log_launch("no GUI activity for 30 minutes; exiting")
+                        break
+        else:
+            while True:
+                time.sleep(1)
     except KeyboardInterrupt:
         print("\nShutting down.")
     finally:
         httpd.shutdown()
+
+
+def run_diag(out_path=None) -> int:
+    """Self-check the (frozen) bundle: can the native-window stack even import?
+
+    Writes JSON to out_path (a windowed exe has no stdout) and returns 0 when all
+    modules REQUIRED on this platform import, 2 otherwise. CI runs the built exe
+    with --diag so a bundle that can't create the native window fails the build
+    instead of shipping; on a buyer's machine the same file explains a fallback.
+    """
+    info = {
+        "version": APP_VERSION,
+        "python": sys.version.split()[0],
+        "platform": platform.platform(),
+        "frozen": bool(getattr(sys, "frozen", False)),
+        "imports": {},
+        "webview2_runtime": None,
+        "edge_path": None,
+    }
+    is_win = sys.platform.startswith("win")
+    if is_win:
+        # Same runtime pin run_app uses, so the diag exercises the shipped config.
+        os.environ.setdefault("PYTHONNET_RUNTIME", "netfx")
+    required = ["webview"] + (["clr_loader", "clr"] if is_win else [])
+    for mod in ["webview", "clr_loader", "clr"] if is_win else ["webview"]:
+        try:
+            __import__(mod)
+            info["imports"][mod] = "ok"
+        except Exception as e:
+            info["imports"][mod] = f"FAIL: {e!r}"
+    if is_win:
+        info["edge_path"] = _edge_path()
+        try:
+            import winreg
+            probes = [
+                (winreg.HKEY_LOCAL_MACHINE,
+                 r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"),
+                (winreg.HKEY_LOCAL_MACHINE,
+                 r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"),
+                (winreg.HKEY_CURRENT_USER,
+                 r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"),
+            ]
+            for hive, key in probes:
+                try:
+                    with winreg.OpenKey(hive, key) as k:
+                        pv = winreg.QueryValueEx(k, "pv")[0]
+                        if pv and pv != "0.0.0.0":
+                            info["webview2_runtime"] = pv
+                            break
+                except OSError:
+                    continue
+        except Exception as e:
+            info["webview2_runtime"] = f"probe failed: {e!r}"
+        if getattr(sys, "frozen", False):
+            # Count bundle files still carrying Mark-of-the-Web (a browser-download
+            # stream that makes .NET refuse our DLLs). Non-destructive evidence;
+            # the app strips these itself on launch (_unblock_bundle).
+            blocked = 0
+            try:
+                for dirpath, _dirs, files in os.walk(os.path.dirname(sys.executable)):
+                    for name in files:
+                        if name.lower().endswith((".dll", ".exe", ".pyd")):
+                            if os.path.exists(os.path.join(dirpath, name) + ":Zone.Identifier"):
+                                blocked += 1
+            except Exception:
+                blocked = -1
+            info["motw_blocked_files"] = blocked
+    ok = all(info["imports"].get(m) == "ok" for m in required)
+    info["ok"] = ok
+    payload = json.dumps(info, indent=2)
+    print(payload)
+    if out_path:
+        try:
+            with open(out_path, "w", encoding="utf-8") as fh:
+                fh.write(payload)
+        except Exception:
+            pass
+    _log_launch(f"diag: ok={ok} imports={info['imports']} webview2={info['webview2_runtime']}")
+    return 0 if ok else 2
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1362,11 +1693,18 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Countdown seconds before typing starts.")
     p.add_argument("--tabs", action="store_true",
                    help="Form mode: press Tab between lines (Tab-jump through fields).")
+    p.add_argument("--diag", action="store_true",
+                   help="Self-check the bundle (imports, WebView2) and exit.")
+    p.add_argument("--diag-out", default=None,
+                   help="With --diag, also write the JSON report to this file.")
     return p
 
 
 def main() -> None:
     args = build_parser().parse_args()
+
+    if args.diag:
+        sys.exit(run_diag(args.diag_out))
 
     # In a packaged app launched from Finder/Explorer there is no controlling
     # terminal (isatty() is False), so treat "frozen + no input args" as GUI too.

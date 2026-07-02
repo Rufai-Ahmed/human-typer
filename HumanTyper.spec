@@ -32,6 +32,14 @@ for _pkg in _collect:
     except Exception as exc:  # pragma: no cover
         print(f"[spec] {_pkg} not collected ({exc}).")
 
+if sys.platform.startswith('win'):
+    # pywebview resolves its platform module dynamically, and pythonnet's import
+    # name is 'clr' (so collect_all above may miss it): name them explicitly, per
+    # pywebview's freezing docs. The built exe is then gated in CI by `--diag`,
+    # which fails the build if any of these cannot import from the frozen bundle.
+    hiddenimports += ['clr', 'clr_loader', 'webview.platforms.winforms',
+                      'webview.platforms.edgechromium']
+
 a = Analysis(
     ['human_typer.py'],
     pathex=[],
@@ -91,8 +99,8 @@ if sys.platform == 'darwin':
         info_plist={
             'CFBundleName': 'Human Typer',
             'CFBundleDisplayName': 'Human Typer',
-            'CFBundleShortVersionString': '1.6.4',
-            'CFBundleVersion': '1.6.4',
+            'CFBundleShortVersionString': '1.6.5',
+            'CFBundleVersion': '1.6.5',
             'NSHighResolutionCapable': True,
             'LSMinimumSystemVersion': '10.13.0',
             'NSHumanReadableCopyright': '© Human Typer',
