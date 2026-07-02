@@ -207,19 +207,45 @@ module.exports = async (req, res) => {
     );
     const v = await vr.json();
     const tx = v && v.data;
-    const amount = Number(tx && tx.amount) || 0; // kobo; coerce so === and >= agree
+    // What the customer was actually charged, in kobo. When Paystack passes its fee
+    // to the customer this comes back inflated (e.g. 203046 for the ₦2,000 plan)
+    // while requested_amount keeps the price checkout was initialized with. Grade
+    // plans on the SMALLER of the two: that strips fee inflation but can never
+    // grant more than what was really paid.
+    const paidKobo = Number(tx && tx.amount) || 0;
+    const requestedKobo = Number(tx && tx.requested_amount) || 0;
+    const amount = requestedKobo > 0 ? Math.min(paidKobo, requestedKobo) : paidKobo;
     const okStatus =
       v &&
       v.status &&
       tx &&
       tx.status === "success" &&
       (tx.currency || "NGN") === "NGN";
-    // The PLAN is derived ONLY from the Paystack-verified amount, never from anything
-    // the client sent: exactly ₦2,000 is a monthly pass; ₦10,000+ is a lifetime order.
-    const isMonthly = okStatus && amount === monthlyKobo;
+    // The PLAN is derived ONLY from Paystack-verified amounts, never from anything
+    // the client sent: ₦10,000+ is a lifetime order; ₦2,000 up to there is a monthly
+    // pass. Floors, not exact matches, so amount noise cannot orphan a real payment.
     const isLifetime = okStatus && amount >= priceKobo;
-    if (!okStatus || (!isMonthly && !isLifetime)) {
+    const isMonthly = okStatus && !isLifetime && amount >= monthlyKobo;
+    if (!okStatus) {
       res.status(200).json({ ok: false, status: "not_a_successful_payment" });
+      return;
+    }
+    if (!isMonthly && !isLifetime) {
+      // Verified money arrived but matched no plan: alert the owner to fulfill it
+      // manually instead of dropping it like a failed verify.
+      try {
+        await sendEmail(
+          process.env.PAYMENT_ALERT_EMAIL || "payment@rufaiahmed.com",
+          `Human Typer payment needs manual review: ${nairaFromKobo(paidKobo)}`,
+          paymentAlertHtml({
+            email: (tx.customer && tx.customer.email) || "unknown",
+            amountKobo: paidKobo,
+            reference,
+            planLine: "No plan matched this amount; issue the key manually",
+          }),
+        );
+      } catch (_) {}
+      res.status(200).json({ ok: false, status: "unrecognized_amount" });
       return;
     }
 
@@ -234,8 +260,8 @@ module.exports = async (req, res) => {
       try {
         await sendEmail(
           process.env.PAYMENT_ALERT_EMAIL || "payment@rufaiahmed.com",
-          `New Human Typer payment: ${nairaFromKobo(amount)} from ${email}`,
-          paymentAlertHtml({ email, amountKobo: amount, reference, planLine }),
+          `New Human Typer payment: ${nairaFromKobo(paidKobo)} from ${email}`,
+          paymentAlertHtml({ email, amountKobo: paidKobo, reference, planLine }),
         );
       } catch (_) {}
     };
