@@ -149,6 +149,14 @@ document.addEventListener('DOMContentLoaded', () => {
         accessGate.classList.add('hidden');
         if (accessPoll) { clearInterval(accessPoll); accessPoll = null; }
         appRoot.classList.remove('hidden');
+        // Adopt a run already in flight (browser mode survives a page reload) so it
+        // stays visible and stoppable instead of typing on unwatched.
+        fetch('/api/status').then((r) => r.json()).then((d) => {
+            if (['countdown', 'typing', 'paused'].includes(d.state)) {
+                typingOverlay.classList.remove('hidden');
+                if (!pollInterval) pollInterval = setInterval(pollStatus, 150);
+            }
+        }).catch(() => {});
     }
 
     function showGate() {
@@ -413,19 +421,31 @@ document.addEventListener('DOMContentLoaded', () => {
             btnResume.classList.add('hidden');
             typingOverlay.classList.remove('hidden');
             const text = formModeCheckbox.checked ? rawText.replace(/\r?\n/g, '\t') : rawText;
-            fetch('/api/type', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text, delay_ms, humanize, typos, delay,
-                    variance: advanced.variance, word_pause: advanced.word_pause,
-                    sentence_pause: advanced.sentence_pause, hesitation_prob: advanced.hesitation_prob,
-                    hesitation: advanced.hesitation }),
-            }).then((r) => r.json().then((data) => ({ ok: r.ok, data })))
-              .then(({ ok, data }) => {
-                  if (ok) { pollInterval = setInterval(pollStatus, 150); }
-                  else { alert(data.error || 'Failed to start typing.'); typingOverlay.classList.add('hidden'); finishRun('error'); }
-              })
-              .catch(() => { alert('Error connecting to the typing engine.'); typingOverlay.classList.add('hidden'); finishRun('error'); });
+            const payload = JSON.stringify({ text, delay_ms, humanize, typos, delay,
+                variance: advanced.variance, word_pause: advanced.word_pause,
+                sentence_pause: advanced.sentence_pause, hesitation_prob: advanced.hesitation_prob,
+                hesitation: advanced.hesitation });
+            const fail = (msg) => { alert(msg); typingOverlay.classList.add('hidden'); finishRun('error'); };
+            const attemptStart = (isRetry) => {
+                fetch('/api/type', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: payload,
+                }).then((r) => r.json().then((data) => ({ ok: r.ok, data })))
+                  .then(({ ok, data }) => {
+                      if (ok) { pollInterval = setInterval(pollStatus, 150); }
+                      else if (!isRetry && data.error === 'Already typing') {
+                          // A leftover run is blocking (e.g. the page was reloaded
+                          // mid-run in browser mode): stop it and retry once.
+                          fetch('/api/abort', { method: 'POST' })
+                              .then(() => setTimeout(() => attemptStart(true), 800))
+                              .catch(() => fail('Failed to start typing.'));
+                      }
+                      else { fail(data.error || 'Failed to start typing.'); }
+                  })
+                  .catch(() => fail('Error connecting to the typing engine.'));
+            };
+            attemptStart(false);
         });
     }
 
@@ -622,12 +642,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 statChar.textContent = currentChar || 'None';
             }
             else if (data.state === 'paused') {
-                overlayTitle.textContent = 'Paused';
-                overlayInstruction.textContent = data.pause_reason === 'focus'
-                    ? 'You switched away from your target window. Click back into it, then Resume.'
-                    : 'Paused. Resume when you are ready.';
+                const waiting = data.pause_reason === 'waiting';
+                overlayTitle.textContent = waiting ? 'Where should it type?' : 'Paused';
+                overlayInstruction.textContent = waiting
+                    ? 'Click into the app or field where the text should go. Typing starts there automatically.'
+                    : data.pause_reason === 'focus'
+                        ? 'You switched away from your target window. Click back into it, then Resume.'
+                        : 'Paused. Resume when you are ready.';
                 btnPause.classList.add('hidden');
-                btnResume.classList.remove('hidden');
+                btnResume.classList.toggle('hidden', waiting);
             }
             else if (data.state === 'done') {
                 cleanup('done', data);

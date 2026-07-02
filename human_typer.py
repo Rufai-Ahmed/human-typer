@@ -178,9 +178,10 @@ class TypingState:
     countdown_remaining: float = 0.0
     cancel_event: threading.Event = None
     pause_event: threading.Event = None
-    pause_reason: str = ""       # "manual" or "focus" while paused
+    pause_reason: str = ""       # "manual", "focus" or "waiting" while paused
     focus_guard: bool = True     # auto-pause if the frontmost app changes mid-run
     focus_target: object = None  # token for the app focused when typing began
+    gui_token: object = None     # token for our own window when Start was clicked
 
 typing_status = TypingState()
 typing_status.cancel_event = threading.Event()
@@ -229,6 +230,16 @@ def _focus_watcher() -> None:
             else:
                 miss = 0
             time.sleep(0.45)
+        elif s.state == "paused" and s.pause_reason == "waiting" and s.pause_event.is_set():
+            # Run started while our own window was still frontmost: lock onto the
+            # first OTHER app the user lands in and let typing begin there.
+            tok = _frontmost_token()
+            if tok is not None and tok != s.gui_token:
+                s.focus_target = tok
+                s.pause_reason = ""
+                s.pause_event.clear()
+            miss = 0
+            time.sleep(0.3)
         else:
             miss = 0
             time.sleep(0.3)
@@ -428,7 +439,7 @@ ACTIVATE_URL = os.environ.get(
 
 # Bump this on every release; the app compares it to the server's latest version
 # and shows a "Download update" banner when this build is behind.
-APP_VERSION = "1.6.3"
+APP_VERSION = "1.6.4"
 VERSION_URL = os.environ.get(
     "HUMANTYPER_VERSION_URL", ACTIVATE_URL.rsplit("/api/", 1)[0] + "/api/version"
 )
@@ -923,7 +934,16 @@ def type_text(text: str, profile: TypingProfile, countdown: float, is_gui: bool 
         typing_status.state = "typing"
         typing_status.countdown_remaining = 0.0
         if typing_status.focus_guard:
-            typing_status.focus_target = _frontmost_token()
+            tok = _frontmost_token()
+            if tok is not None and tok == typing_status.gui_token:
+                # The countdown ran out with our own window still frontmost: instead
+                # of typing into ourselves, hold in a "waiting" pause. The focus
+                # watcher locks onto the first app the user switches to and resumes.
+                typing_status.pause_reason = "waiting"
+                typing_status.pause_event.set()
+                typing_status.focus_target = None
+            else:
+                typing_status.focus_target = tok
 
     start = time.perf_counter()
     prev = ""
@@ -1109,6 +1129,9 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
                     pauses=bool(params.get("pauses", humanize)),
                 )
                 typing_status.focus_guard = focus_guard
+                # Our own window is frontmost right now (the user just clicked Start
+                # in it); remember it so the run never locks onto it as the target.
+                typing_status.gui_token = _frontmost_token()
 
                 t = threading.Thread(
                     target=type_text,
