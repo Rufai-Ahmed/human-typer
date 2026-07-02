@@ -616,8 +616,24 @@ kbd{
 }
 .price-actions{ margin-top:auto; padding-top:var(--s-5); }   /* bottom-align the buy area so both cards match */
 .price-badge-alt::before{ background:var(--text-muted); }    /* muted dot to set the monthly card apart */
+/* Stack the two plan cards once they get too narrow side by side. */
 @media (max-width:760px){
-  .price-grid{ grid-template-columns:1fr; max-width:480px; }
+  .price-grid{ grid-template-columns:1fr; max-width:480px; gap:var(--s-5); }
+}
+/* Phones: reclaim card width and keep long labels / seat rows from clipping. */
+@media (max-width:430px){
+  .price-card{ padding:var(--s-6); }
+  .price-buy{ white-space:normal; line-height:var(--lh-ui); }
+  /* Let each seat row wrap its total to a second line instead of clipping it. */
+  .seat-opt{ flex-wrap:wrap; row-gap:var(--s-1); }
+  .seat-qty{ flex:0 0 auto; }
+  .seat-per{ flex:1 1 auto; text-align:right; }
+  .seat-total{
+    flex:1 0 100%;
+    flex-direction:row;
+    align-items:baseline;
+    justify-content:space-between;
+  }
 }
 .price-badge{
   display:inline-flex;
