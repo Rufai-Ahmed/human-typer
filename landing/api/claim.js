@@ -50,8 +50,11 @@ async function verifyPayment(reference) {
     try {
       const c = await fetchFlwCharge(reference);
       if (c) {
+        // The charges schema enum says "succeeded"; the PWBT guide says
+        // "successful". Accept either — both mean settled money.
         const ok =
-          c.status === "succeeded" && (c.currency || "NGN") === "NGN";
+          (c.status === "succeeded" || c.status === "successful") &&
+          (c.currency || "NGN") === "NGN";
         // v4 amounts are naira decimals and fees live in a separate array, so
         // amount is the charge amount itself; convert to kobo for grading.
         const amountKobo = Math.round((Number(c.amount) || 0) * 100);

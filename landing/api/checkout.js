@@ -65,65 +65,38 @@ module.exports = async (req, res) => {
     .slice(2, 10)}`;
 
   try {
-    // General flow (production rejects inline bank_transfer on the
-    // orchestrator): customer -> payment method -> charge.
-    let customerId = null;
-    try {
-      const cu = await flw("/customers", {
-        method: "POST",
-        headers: { "X-Idempotency-Key": `${reference}-cus` },
-        body: JSON.stringify({ email }),
-      });
-      customerId = cu && cu.data && cu.data.id;
-    } catch (e) {
-      // Possibly "already exists": look the customer up by email instead.
-      const found = await flw(
-        `/customers?email=${encodeURIComponent(email)}`,
-      ).catch(() => null);
-      const d = found && found.data;
-      const arr = Array.isArray(d) ? d : (d && (d.customers || d.items)) || [];
-      const match = arr.find((c) => c && c.email === email) || arr[0];
-      customerId = match && match.id;
-      if (!customerId) throw e;
-    }
-
-    const pm = await flw("/payment-methods", {
+    // PWBT on this production account works through the virtual-accounts
+    // product (the charges/payment-methods route rejects bank_transfer):
+    // create/reuse the customer, then mint a dynamic account carrying OUR
+    // reference and meta. Funding settles as a charge under that reference.
+    // POST /customers is idempotent by email (returns the existing id).
+    const cu = await flw("/customers", {
       method: "POST",
-      headers: { "X-Idempotency-Key": `${reference}-pmd` },
-      body: JSON.stringify({
-        type: "bank_transfer",
-        bank_transfer: {
-          account_type: "dynamic",
-          account_expires_in: 3600, // seconds: buyer has an hour to transfer
-        },
-      }),
+      headers: { "X-Idempotency-Key": `${reference}-cus` },
+      body: JSON.stringify({ email }),
     });
-    const paymentMethodId = pm && pm.data && pm.data.id;
-    if (!paymentMethodId) throw new Error("no payment_method id returned");
+    const customerId = cu && cu.data && cu.data.id;
+    if (!customerId) throw new Error("no customer id returned");
 
-    const charge = await flw("/charges", {
+    const va = await flw("/virtual-accounts", {
       method: "POST",
       headers: { "X-Idempotency-Key": reference },
       body: JSON.stringify({
         reference,
-        currency: "NGN",
         customer_id: customerId,
-        payment_method_id: paymentMethodId,
-        redirect_url: "https://www.humantyper.online/",
         amount,
-        // claim.js falls back to meta.email when the retrieved charge only
+        currency: "NGN",
+        account_type: "dynamic",
+        expiry: 3600,
+        narration: "Human Typer",
+        // claim.js falls back to meta.email when the verified payment only
         // carries a customer id; plan/seats ride along for the owner alert.
         meta: { email, plan, seats: String(seats) },
       }),
     });
 
-    const d = (charge && charge.data) || {};
-    const na = d.next_action || {};
-    const bank =
-      (na.type === "requires_bank_transfer" && na.requires_bank_transfer) ||
-      na.payment_instruction ||
-      {};
-    if (!bank.account_number) {
+    const d = (va && va.data) || {};
+    if (!d.account_number) {
       res.status(502).json({
         ok: false,
         error: "Flutterwave did not return transfer details; try again shortly",
@@ -132,16 +105,16 @@ module.exports = async (req, res) => {
     }
     res.status(200).json({
       ok: true,
-      reference,
-      charge_id: d.id || "",
+      reference: d.reference || reference,
+      va_id: d.id || "",
       // Display exactly what Flutterwave says to send (it can differ from our
-      // sticker price when fees are passed to the customer).
+      // sticker price if fees are ever passed to the customer).
       amount: Number(d.amount) || amount,
       currency: d.currency || "NGN",
-      account_number: bank.account_number,
-      bank_name: bank.account_bank_name || "",
-      expires_at: bank.account_expiration_datetime || "",
-      note: bank.note || "",
+      account_number: d.account_number,
+      bank_name: d.account_bank_name || "",
+      expires_at: d.account_expiration_datetime || "",
+      note: d.note || "",
     });
   } catch (err) {
     res.status(502).json({
