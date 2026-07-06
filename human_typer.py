@@ -532,7 +532,7 @@ ACTIVATE_URL = os.environ.get(
 
 # Bump this on every release; the app compares it to the server's latest version
 # and shows a "Download update" banner when this build is behind.
-APP_VERSION = "1.6.5"
+APP_VERSION = "1.6.6"
 VERSION_URL = os.environ.get(
     "HUMANTYPER_VERSION_URL", ACTIVATE_URL.rsplit("/api/", 1)[0] + "/api/version"
 )
@@ -1108,23 +1108,57 @@ def type_text(text: str, profile: TypingProfile, countdown: float, is_gui: bool 
         print(f"\nDone — {len(text)} chars in {elapsed:.1f}s (~{effective_wpm:.0f} WPM).")
 
 
+def _read_clipboard_windows() -> str:
+    """Read CF_UNICODETEXT straight from the Win32 clipboard API.
+
+    Replaces PowerShell's Get-Clipboard, which decoded through the console
+    codepage — emoji or smart quotes made the decode raise, the endpoint 500'd,
+    and the Paste Clipboard button looked dead. It also spawned a whole
+    PowerShell process per read, which the clipboard watch does twice a second.
+    """
+    import ctypes
+    from ctypes import wintypes
+    CF_UNICODETEXT = 13
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.GetClipboardData.restype = wintypes.HANDLE   # default c_int truncates 64-bit handles
+    kernel32.GlobalLock.argtypes = [wintypes.HANDLE]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [wintypes.HANDLE]
+    for _ in range(5):                  # another app may briefly hold the clipboard open
+        if user32.OpenClipboard(None):
+            break
+        time.sleep(0.02)
+    else:
+        return ""
+    try:
+        handle = user32.GetClipboardData(CF_UNICODETEXT)
+        if not handle:
+            return ""                   # empty clipboard, or non-text content
+        ptr = kernel32.GlobalLock(handle)
+        if not ptr:
+            return ""
+        try:
+            return ctypes.wstring_at(ptr)
+        finally:
+            kernel32.GlobalUnlock(handle)
+    finally:
+        user32.CloseClipboard()
+
+
 def read_clipboard() -> str:
     """Best-effort cross-platform clipboard read."""
     if sys.platform == "darwin":
         return subprocess.run(["pbpaste"], capture_output=True, text=True).stdout
+    if sys.platform.startswith("win"):
+        return _read_clipboard_windows()
     if sys.platform.startswith("linux"):
         return subprocess.run(
             ["xclip", "-selection", "clipboard", "-o"],
             capture_output=True, text=True,
         ).stdout
-    if sys.platform.startswith("win"):
-        # CREATE_NO_WINDOW stops a console window flashing up in the no-console app.
-        return subprocess.run(
-            ["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
-            capture_output=True, text=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        ).stdout
-    sys.exit("Clipboard read not supported on this platform.")
+    return ""   # never raise SystemExit inside a server thread
 
 
 def resolve_text(args) -> str:
@@ -1436,17 +1470,32 @@ def _bind_server(port):
     sys.exit("Could not find a free port to run the app server.")
 
 
+def _frozen_onedir() -> bool:
+    """True only for a onedir freeze (support files unpacked next to the exe).
+
+    A onefile build unpacks to a throwaway temp dir instead, so nothing beside
+    the exe belongs to us — and walking its folder (often Downloads) would
+    touch other people's files.
+    """
+    if not getattr(sys, "frozen", False):
+        return False
+    mei = os.path.abspath(getattr(sys, "_MEIPASS", ""))
+    exe_dir = os.path.abspath(os.path.dirname(sys.executable))
+    return mei == exe_dir or mei.startswith(exe_dir + os.sep)
+
+
 def _unblock_bundle() -> None:
-    """Strip Mark-of-the-Web from our own bundled DLLs (Windows, frozen only).
+    """Strip Mark-of-the-Web from our own bundled DLLs (Windows, onedir only).
 
     A zip downloaded in a browser carries a Zone.Identifier stream that Extract
     All propagates onto every file. .NET Framework then REFUSES to load our
     bundled Python.Runtime.dll, so the native window dies on machines that are
     otherwise perfectly healthy (pyinstaller#8294) — while dev boxes and CI,
     whose files were never downloaded, work fine. Deleting the stream is exactly
-    what Explorer's "Unblock" checkbox does.
+    what Explorer's "Unblock" checkbox does. Onefile builds are immune: the
+    bootloader writes the DLLs itself, so they never carry the stream.
     """
-    if not (sys.platform.startswith("win") and getattr(sys, "frozen", False)):
+    if not (sys.platform.startswith("win") and _frozen_onedir()):
         return
     root = os.path.dirname(sys.executable)
     cleared = 0
@@ -1639,7 +1688,7 @@ def run_diag(out_path=None) -> int:
                     continue
         except Exception as e:
             info["webview2_runtime"] = f"probe failed: {e!r}"
-        if getattr(sys, "frozen", False):
+        if _frozen_onedir():
             # Count bundle files still carrying Mark-of-the-Web (a browser-download
             # stream that makes .NET refuse our DLLs). Non-destructive evidence;
             # the app strips these itself on launch (_unblock_bundle).
@@ -1653,6 +1702,8 @@ def run_diag(out_path=None) -> int:
             except Exception:
                 blocked = -1
             info["motw_blocked_files"] = blocked
+        elif getattr(sys, "frozen", False):
+            info["motw_blocked_files"] = "n/a (onefile: DLLs unpack fresh, never tagged)"
     ok = all(info["imports"].get(m) == "ok" for m in required)
     info["ok"] = ok
     payload = json.dumps(info, indent=2)

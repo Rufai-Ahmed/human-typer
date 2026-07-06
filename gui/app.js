@@ -385,14 +385,18 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const res = await fetch('/api/clipboard');
             const data = await res.json();
-            if (data.text) {
-                textInput.value = data.text;
-                updateCounters();
-                btnClipboard.style.borderColor = 'var(--accent)';
-                setTimeout(() => { btnClipboard.style.borderColor = ''; }, 1000);
+            if (data.error) throw new Error(data.error);
+            if (!data.text) {
+                alert('Your clipboard has no text right now. Copy some text first, then press Paste Clipboard again.');
+                return;
             }
+            textInput.value = data.text;
+            updateCounters();
+            updateStealth();
+            btnClipboard.style.borderColor = 'var(--accent)';
+            setTimeout(() => { btnClipboard.style.borderColor = ''; }, 1000);
         } catch (err) {
-            alert('Failed to read clipboard.');
+            alert('Could not read the clipboard: ' + ((err && err.message) || err));
         }
     });
 

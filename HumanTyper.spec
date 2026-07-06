@@ -1,7 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec for Human Typer. Produces a windowed (no-terminal) app:
 #   macOS   -> dist/Human Typer.app
-#   Windows -> dist/HumanTyper/HumanTyper.exe (+ supporting files)
+#   Windows -> dist/HumanTyper.exe (single file: buyers kept getting lost in
+#              the onedir folder hunting for the exe among the DLLs)
 #
 # Build with:  python -m PyInstaller --noconfirm --clean HumanTyper.spec
 
@@ -61,48 +62,70 @@ if sys.platform == 'darwin':
 else:
     _target_arch = None
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
-    name='HumanTyper',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,
-    console=False,          # windowed: no terminal window
-    disable_windowed_traceback=False,
-    argv_emulation=True,    # let macOS pass file/open events through cleanly
-    target_arch=_target_arch,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=ICON,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    name='HumanTyper',
-)
-
-if sys.platform == 'darwin':
-    app = BUNDLE(
-        coll,
-        name='Human Typer.app',
+if sys.platform.startswith('win'):
+    # Onefile: everything inside one HumanTyper.exe. The bootloader unpacks to
+    # a temp dir at launch, so the bundled DLLs are written by the app itself
+    # and can never inherit a browser's Mark-of-the-Web (pyinstaller#8294).
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.datas,
+        [],
+        name='HumanTyper',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        runtime_tmpdir=None,
+        console=False,          # windowed: no terminal window
+        disable_windowed_traceback=False,
         icon=ICON,
-        bundle_identifier='xyz.humantyper.app',
-        info_plist={
-            'CFBundleName': 'Human Typer',
-            'CFBundleDisplayName': 'Human Typer',
-            'CFBundleShortVersionString': '1.6.5',
-            'CFBundleVersion': '1.6.5',
-            'NSHighResolutionCapable': True,
-            'LSMinimumSystemVersion': '10.13.0',
-            'NSHumanReadableCopyright': '© Human Typer',
-        },
     )
+else:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name='HumanTyper',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        console=False,          # windowed: no terminal window
+        disable_windowed_traceback=False,
+        argv_emulation=True,    # let macOS pass file/open events through cleanly
+        target_arch=_target_arch,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon=ICON,
+    )
+
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.datas,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        name='HumanTyper',
+    )
+
+    if sys.platform == 'darwin':
+        app = BUNDLE(
+            coll,
+            name='Human Typer.app',
+            icon=ICON,
+            bundle_identifier='xyz.humantyper.app',
+            info_plist={
+                'CFBundleName': 'Human Typer',
+                'CFBundleDisplayName': 'Human Typer',
+                'CFBundleShortVersionString': '1.6.6',
+                'CFBundleVersion': '1.6.6',
+                'NSHighResolutionCapable': True,
+                'LSMinimumSystemVersion': '10.13.0',
+                'NSHumanReadableCopyright': '© Human Typer',
+            },
+        )

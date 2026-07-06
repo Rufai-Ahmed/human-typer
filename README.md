@@ -56,8 +56,8 @@ You don't need the App Store — just send buyers the file:
 
 - **macOS:** right-click `Human Typer.app` → **Compress**, send the `.zip`
   (or build a `.dmg`). Unsigned apps: buyers right-click → **Open** the first time.
-- **Windows:** zip the `dist\HumanTyper` folder and send it. Unsigned apps:
-  buyers click **More info → Run anyway** past SmartScreen.
+- **Windows:** send the single `dist\HumanTyper.exe` as-is — one file, nothing
+  to extract. Unsigned apps: buyers click **More info → Run anyway** past SmartScreen.
 
 ### Permissions (first launch)
 

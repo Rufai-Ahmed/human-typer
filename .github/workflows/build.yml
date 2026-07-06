@@ -1,7 +1,7 @@
 name: Build Human Typer
 
 # Builds the distributable apps in the cloud:
-#   - Windows  -> HumanTyper-Windows.zip   (the .exe + its files)
+#   - Windows  -> HumanTyper.exe            (single-file app, no zip to extract)
 #   - macOS    -> HumanTyper-macOS.zip      (ONE universal2 build: native on both
 #                                            Apple Silicon and Intel Macs)
 #
@@ -55,19 +55,17 @@ jobs:
         # browser-fallback experience. --diag exits non-zero on a broken bundle.
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath "dist/HumanTyper/HumanTyper.exe" `
+          $p = Start-Process -FilePath "dist/HumanTyper.exe" `
                  -ArgumentList "--diag","--diag-out","diag.json" -Wait -PassThru
           if (Test-Path diag.json) { Get-Content diag.json } else { Write-Error "diag.json was not written"; exit 1 }
           if ($p.ExitCode -ne 0) { Write-Error "frozen bundle failed its self-check (exit $($p.ExitCode))"; exit 1 }
 
-      - name: Package
-        run: Compress-Archive -Path dist/HumanTyper -DestinationPath "HumanTyper-Windows.zip" -Force
-
       - name: Upload build artifact
+        # The single exe IS the download — no zip, nothing to extract.
         uses: actions/upload-artifact@v4
         with:
           name: HumanTyper-Windows
-          path: HumanTyper-Windows.zip
+          path: dist/HumanTyper.exe
           if-no-files-found: error
 
   build-macos:
