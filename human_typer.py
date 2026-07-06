@@ -532,7 +532,7 @@ ACTIVATE_URL = os.environ.get(
 
 # Bump this on every release; the app compares it to the server's latest version
 # and shows a "Download update" banner when this build is behind.
-APP_VERSION = "1.6.6"
+APP_VERSION = "1.6.7"
 VERSION_URL = os.environ.get(
     "HUMANTYPER_VERSION_URL", ACTIVATE_URL.rsplit("/api/", 1)[0] + "/api/version"
 )
@@ -1538,6 +1538,109 @@ def _edge_path():
     return None
 
 
+_status_bar_refs = {}   # AppKit objects must outlive this scope or the item vanishes
+
+
+def _install_status_item(window):
+    """macOS menu-bar item: quick actions without raising the window.
+
+    Runs inside the AppKit process pywebview already owns — no second event
+    loop, no new dependency. Entirely best-effort: any failure is logged and
+    the app runs exactly as before (the item is a convenience, not the product).
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        from AppKit import (NSApp, NSImage, NSMenu, NSMenuItem, NSObject,
+                            NSStatusBar, NSVariableStatusItemLength)
+        from Foundation import NSOperationQueue
+    except Exception as exc:
+        _log_launch(f"status item unavailable: {exc!r}")
+        return
+
+    def install():
+        try:
+            class _HTMenuTarget(NSObject):
+                def showWindow_(self, sender):
+                    try:
+                        window.show()
+                        NSApp.activateIgnoringOtherApps_(True)
+                    except Exception:
+                        pass
+
+                def typeClipboard_(self, sender):
+                    threading.Thread(target=_fire_quick_type, daemon=True).start()
+
+                def stopTyping_(self, sender):
+                    typing_status.cancel_event.set()
+
+                def quitApp_(self, sender):
+                    try:
+                        window.destroy()
+                    except Exception:
+                        os._exit(0)
+
+                def menuNeedsUpdate_(self, menu):
+                    try:
+                        s = typing_status.state
+                        if s in ("countdown",):
+                            line = "Starting…"
+                        elif s == "typing":
+                            line = "Typing…"
+                        elif s == "paused":
+                            line = ("Waiting for your click…"
+                                    if typing_status.pause_reason == "waiting" else "Paused")
+                        else:
+                            line = "Ready"
+                        _status_bar_refs["status_mi"].setTitle_(f"Human Typer — {line}")
+                    except Exception:
+                        pass
+
+            item = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
+            btn = item.button()
+            icon = None
+            try:
+                # SF Symbol, template-rendered: adapts to light/dark menu bars (macOS 11+).
+                icon = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+                    "keyboard", "Human Typer")
+            except Exception:
+                icon = None
+            if icon is not None:
+                icon.setTemplate_(True)
+                btn.setImage_(icon)
+            else:
+                btn.setTitle_("▸")
+
+            target = _HTMenuTarget.alloc().init()
+            menu = NSMenu.alloc().init()
+            menu.setAutoenablesItems_(False)
+
+            def add(title, sel, key=""):
+                mi = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, sel, key)
+                mi.setTarget_(target)
+                menu.addItem_(mi)
+                return mi
+
+            status_mi = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                "Human Typer — Ready", None, "")
+            status_mi.setEnabled_(False)
+            menu.addItem_(status_mi)
+            menu.addItem_(NSMenuItem.separatorItem())
+            add("Show Human Typer", "showWindow:")
+            add("Type Clipboard Now", "typeClipboard:")
+            add("Stop Typing", "stopTyping:")
+            menu.addItem_(NSMenuItem.separatorItem())
+            add("Quit Human Typer", "quitApp:", "q")
+            menu.setDelegate_(target)
+            item.setMenu_(menu)
+            _status_bar_refs.update(item=item, menu=menu, target=target, status_mi=status_mi)
+            _log_launch("menu bar item installed")
+        except Exception as exc:
+            _log_launch(f"status item failed: {exc!r}")
+
+    NSOperationQueue.mainQueue().addOperationWithBlock_(install)
+
+
 def run_app(port=5000, force_browser=False):
     """Run the engine server and present the UI in a native desktop window.
 
@@ -1560,7 +1663,7 @@ def run_app(port=5000, force_browser=False):
                 # won't have. Win10/11 ship .NET Framework 4.8: pin netfx.
                 os.environ.setdefault("PYTHONNET_RUNTIME", "netfx")
             import webview
-            webview.create_window(
+            win = webview.create_window(
                 "Human Typer",
                 url,
                 width=1180,
@@ -1568,7 +1671,10 @@ def run_app(port=5000, force_browser=False):
                 min_size=(960, 680),
                 background_color="#0b0b12",
             )
-            webview.start()
+            if sys.platform == "darwin":
+                webview.start(_install_status_item, win)
+            else:
+                webview.start()
             return
         except ImportError as exc:
             _log_launch(f"pywebview import failed: {exc!r}")
