@@ -1022,3 +1022,77 @@ details a:hover{ text-decoration:underline; }
     body { background-image: none; }
   }
 }
+
+/* ============================================================
+   TRANSFER PANEL (Flutterwave pay-with-bank-transfer checkout)
+   ============================================================ */
+.transfer-panel{
+  margin-top:var(--s-4);
+  padding:var(--s-4) var(--s-5);
+  background:var(--surface-2);
+  border:1px solid var(--border);
+  border-radius:var(--r-card, 12px);
+  font-family:var(--font-mono);
+  font-size:var(--text-sm);
+}
+.tp-row{
+  display:flex;
+  align-items:center;
+  gap:var(--s-3);
+  padding:var(--s-2) 0;
+  border-bottom:1px solid var(--border);
+}
+.tp-row:last-of-type{ border-bottom:none; }
+.tp-label{
+  flex:0 0 92px;
+  color:var(--text-subtle);
+  text-transform:uppercase;
+  font-size:var(--text-eyebrow);
+  letter-spacing:var(--ls-eyebrow);
+}
+.tp-value{ color:var(--text); }
+.tp-amount{
+  color:var(--accent);
+  font-weight:var(--fw-bold);
+  font-size:var(--text-xl, 1.4rem);
+}
+.tp-account{
+  font-size:var(--text-lg);
+  font-weight:var(--fw-medium);
+  letter-spacing:0.08em;
+}
+.tp-copy{
+  margin-left:auto;
+  padding:2px 10px;
+  font:inherit;
+  font-size:var(--text-sm);
+  color:var(--text-secondary);
+  background:var(--surface-3);
+  border:1px solid var(--border-strong);
+  border-radius:6px;
+  cursor:pointer;
+}
+.tp-copy:hover{ color:var(--text); border-color:var(--accent); }
+.tp-status{
+  display:flex;
+  align-items:center;
+  gap:var(--s-2);
+  margin-top:var(--s-3);
+  color:var(--text-muted);
+}
+.tp-status .dot{
+  width:8px; height:8px; border-radius:50%;
+  background:var(--accent);
+}
+.tp-timer{ color:var(--text-subtle); }
+.tp-hint{
+  margin-top:var(--s-3);
+  color:var(--text-subtle);
+  font-size:var(--text-eyebrow);
+  line-height:1.6;
+}
+.tp-ref{ user-select:all; }
+@media (max-width:430px){
+  .tp-label{ flex-basis:70px; }
+  .tp-amount{ font-size:var(--text-lg); }
+}

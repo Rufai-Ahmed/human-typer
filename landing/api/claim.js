@@ -1,23 +1,104 @@
-// Auto-deliver license keys after a Paystack payment (Supabase-backed).
+// Auto-deliver license keys after a Flutterwave payment (Supabase-backed).
 // Handles both single (1 seat) and team/volume packs (5 / 10 / 25 seats).
 //
 // Triggered two ways (both safe and idempotent per payment reference):
-//   1. the browser calls it on payment success with { reference }
-//   2. Paystack's webhook POSTs { event, data: { reference } } here
+//   1. the browser polls it with { reference } while the buyer's bank
+//      transfer settles (see api/checkout.js)
+//   2. Flutterwave's charge.completed webhook POSTs { type, data: {...} } here
 //
-// It never trusts the caller about success or quantity: it re-verifies the
-// transaction with Paystack using the SECRET key, derives the seat count from the
-// verified amount, then atomically claims that many unsold keys from Supabase and
-// emails them via Resend.
+// It never trusts the caller about success or quantity: it re-fetches the
+// charge from Flutterwave v4 (OAuth), derives plan and seat count from the
+// verified amount, then atomically claims unsold keys from Supabase and emails
+// them via Resend. Webhook signatures are NOT relied on for value: a forged
+// call can only trigger this server-side re-verification.
+//
+// Old references from the Paystack era still verify through Paystack when
+// PAYSTACK_SECRET_KEY remains set, so past buyers can re-claim keys.
 //
 // Vercel env vars (set in the dashboard, never in code):
-//   PAYSTACK_SECRET_KEY        sk_live_...
+//   FLW_CLIENT_ID, FLW_CLIENT_SECRET   Flutterwave v4 credentials
 //   SUPABASE_URL               https://<project>.supabase.co
 //   SUPABASE_SERVICE_ROLE_KEY  (Supabase -> Project Settings -> API -> service_role; SECRET)
 //   RESEND_API_KEY             re_...
-// Optional: MAIL_FROM, ADMIN_EMAIL, PRICE_KOBO (default 1000000), DOWNLOAD_URL
+// Optional: PAYSTACK_SECRET_KEY (legacy re-claims), MAIL_FROM, ADMIN_EMAIL,
+//           PRICE_KOBO (default 1000000), MONTHLY_KOBO, DOWNLOAD_URL, FLW_ENV
 
 const PAYSTACK = "https://api.paystack.co";
+const { flw, configured: flwConfigured } = require("./_flw");
+
+// Fetch a charge from Flutterwave v4 by our merchant reference (HT-...) or by
+// charge id (chg_..., what the webhook carries). Returns the charge object or
+// null when nothing matches.
+async function fetchFlwCharge(refOrId) {
+  if (/^chg_/.test(refOrId)) {
+    const r = await flw(`/charges/${encodeURIComponent(refOrId)}`);
+    return (r && r.data) || null;
+  }
+  const r = await flw(`/charges?reference=${encodeURIComponent(refOrId)}`);
+  // Be liberal about the list envelope shape.
+  const d = r && r.data;
+  const arr = Array.isArray(d) ? d : (d && (d.charges || d.items)) || [];
+  return arr.find((c) => c && c.reference === refOrId) || arr[0] || null;
+}
+
+// Normalize either provider's verdict to one shape claim logic can grade:
+// { ok, amountKobo, email, reference } — ok only for a REAL successful NGN
+// payment confirmed server-side with the provider.
+async function verifyPayment(reference) {
+  // Flutterwave v4 first (all new payments).
+  if (flwConfigured()) {
+    try {
+      const c = await fetchFlwCharge(reference);
+      if (c) {
+        const ok =
+          c.status === "succeeded" && (c.currency || "NGN") === "NGN";
+        // v4 amounts are naira decimals and fees live in a separate array, so
+        // amount is the charge amount itself; convert to kobo for grading.
+        const amountKobo = Math.round((Number(c.amount) || 0) * 100);
+        const email =
+          (c.customer && c.customer.email) ||
+          (c.meta && (c.meta.email || c.meta.Email)) ||
+          (c.billing_details && c.billing_details.email) ||
+          null;
+        return { ok, amountKobo, email, reference: c.reference || reference };
+      }
+    } catch (e) {
+      // A 404 means "not a Flutterwave charge" (fall through to legacy);
+      // anything else is a real failure the caller should see.
+      if (!(e && (e.status === 404 || e.status === 400))) throw e;
+    }
+  }
+
+  // Legacy: Paystack-era references (pre-Flutterwave buyers re-claiming).
+  if (process.env.PAYSTACK_SECRET_KEY) {
+    const vr = await fetch(
+      `${PAYSTACK}/transaction/verify/${encodeURIComponent(reference)}`,
+      { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } },
+    );
+    const v = await vr.json().catch(() => null);
+    const tx = v && v.data;
+    if (tx) {
+      // Paystack passes its fee to the customer, inflating `amount` while
+      // requested_amount keeps the initialized price; grade on the smaller.
+      const paidKobo = Number(tx.amount) || 0;
+      const requestedKobo = Number(tx.requested_amount) || 0;
+      const amountKobo =
+        requestedKobo > 0 ? Math.min(paidKobo, requestedKobo) : paidKobo;
+      const ok =
+        Boolean(v.status) &&
+        tx.status === "success" &&
+        (tx.currency || "NGN") === "NGN";
+      return {
+        ok,
+        amountKobo,
+        email: (tx.customer && tx.customer.email) || null,
+        reference,
+      };
+    }
+  }
+
+  return { ok: false, amountKobo: 0, email: null, reference };
+}
 
 async function rpc(fn, args) {
   const base = process.env.SUPABASE_URL.replace(/\/$/, "");
@@ -148,16 +229,18 @@ module.exports = async (req, res) => {
     res.status(405).json({ ok: false, error: "Method not allowed" });
     return;
   }
-  for (const v of [
-    "PAYSTACK_SECRET_KEY",
-    "SUPABASE_URL",
-    "SUPABASE_SERVICE_ROLE_KEY",
-    "RESEND_API_KEY",
-  ]) {
+  for (const v of ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "RESEND_API_KEY"]) {
     if (!process.env[v]) {
       res.status(500).json({ ok: false, error: `Server not configured: ${v}` });
       return;
     }
+  }
+  if (!flwConfigured() && !process.env.PAYSTACK_SECRET_KEY) {
+    res.status(500).json({
+      ok: false,
+      error: "Server not configured: FLW_CLIENT_ID / FLW_CLIENT_SECRET",
+    });
+    return;
   }
 
   let body = req.body;
@@ -167,7 +250,11 @@ module.exports = async (req, res) => {
     body = {};
   }
   body = body || {};
-  const reference = body.reference || (body.data && body.data.reference);
+  // Browser polls send { reference }; the Flutterwave charge.completed webhook
+  // carries data.reference (ours) and data.id (chg_...).
+  const reference =
+    body.reference ||
+    (body.data && (body.data.reference || body.data.id));
   if (!reference) {
     res.status(400).json({ ok: false, error: "Missing payment reference" });
     return;
@@ -205,35 +292,17 @@ module.exports = async (req, res) => {
   };
 
   try {
-    // Source of truth: verify the transaction directly with Paystack.
-    const vr = await fetch(
-      `${PAYSTACK}/transaction/verify/${encodeURIComponent(reference)}`,
-      {
-        headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` },
-      },
-    );
-    const v = await vr.json();
-    const tx = v && v.data;
-    // What the customer was actually charged, in kobo. When Paystack passes its fee
-    // to the customer this comes back inflated (e.g. 203046 for the ₦2,000 plan)
-    // while requested_amount keeps the price checkout was initialized with. Grade
-    // plans on the SMALLER of the two: that strips fee inflation but can never
-    // grant more than what was really paid.
-    const paidKobo = Number(tx && tx.amount) || 0;
-    const requestedKobo = Number(tx && tx.requested_amount) || 0;
-    const amount = requestedKobo > 0 ? Math.min(paidKobo, requestedKobo) : paidKobo;
-    const okStatus =
-      v &&
-      v.status &&
-      tx &&
-      tx.status === "success" &&
-      (tx.currency || "NGN") === "NGN";
-    // The PLAN is derived ONLY from Paystack-verified amounts, never from anything
+    // Source of truth: re-fetch the payment from the provider (Flutterwave v4,
+    // falling back to Paystack for legacy references).
+    const verified = await verifyPayment(String(reference));
+    const paidKobo = verified.amountKobo;
+    const amount = paidKobo;
+    // The PLAN is derived ONLY from provider-verified amounts, never from anything
     // the client sent: ₦10,000+ is a lifetime order; ₦2,000 up to there is a monthly
     // pass. Floors, not exact matches, so amount noise cannot orphan a real payment.
-    const isLifetime = okStatus && amount >= priceKobo;
-    const isMonthly = okStatus && !isLifetime && amount >= monthlyKobo;
-    if (!okStatus) {
+    const isLifetime = verified.ok && amount >= priceKobo;
+    const isMonthly = verified.ok && !isLifetime && amount >= monthlyKobo;
+    if (!verified.ok) {
       res.status(200).json({ ok: false, status: "not_a_successful_payment" });
       return;
     }
@@ -245,9 +314,9 @@ module.exports = async (req, res) => {
           PAYMENT_ALERT_TO,
           `Human Typer payment needs manual review: ${nairaFromKobo(paidKobo)}`,
           paymentAlertHtml({
-            email: (tx.customer && tx.customer.email) || "unknown",
+            email: verified.email || "unknown",
             amountKobo: paidKobo,
-            reference,
+            reference: verified.reference,
             planLine: "No plan matched this amount; issue the key manually",
           }),
         );
@@ -256,7 +325,7 @@ module.exports = async (req, res) => {
       return;
     }
 
-    const email = tx.customer && tx.customer.email;
+    const email = verified.email;
     if (!email) {
       res.status(200).json({ ok: false, status: "no_email" });
       return;
@@ -268,7 +337,7 @@ module.exports = async (req, res) => {
         await sendEmail(
           PAYMENT_ALERT_TO,
           `New Human Typer payment: ${nairaFromKobo(paidKobo)} from ${email}`,
-          paymentAlertHtml({ email, amountKobo: paidKobo, reference, planLine }),
+          paymentAlertHtml({ email, amountKobo: paidKobo, reference: verified.reference, planLine }),
         );
       } catch (_) {}
     };
@@ -277,7 +346,7 @@ module.exports = async (req, res) => {
     if (isMonthly) {
       const claim = await rpc("claim_or_renew_monthly", {
         p_email: email,
-        p_ref: reference,
+        p_ref: verified.reference,
         p_days: monthlyDays,
       });
       const key = claim && claim.key;
@@ -337,7 +406,7 @@ module.exports = async (req, res) => {
     // call for the same payment returns the SAME keys and never allocates more.
     const claim = await rpc("claim_keys", {
       p_email: email,
-      p_ref: reference,
+      p_ref: verified.reference,
       p_qty: qty,
     });
     const keys = (claim && claim.keys) || [];
@@ -384,7 +453,7 @@ module.exports = async (req, res) => {
     await sendEmail(email, subject, keysEmailHtml(keys, downloadUrl));
     res.status(200).json({ ok: true, status: "key_sent", email, plan: "lifetime", count });
   } catch (err) {
-    // Let Paystack retry on transient failures.
+    // 500 lets the provider's webhook retry on transient failures.
     res
       .status(500)
       .json({ ok: false, error: String((err && err.message) || err) });
