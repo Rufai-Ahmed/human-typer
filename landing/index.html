@@ -3,19 +3,123 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Human Typer — Type anywhere, like a real person</title>
-    <meta name="description" content="Human Typer auto-types your text into any app with real, human-feeling keystrokes. Native macOS & Windows app. One-time payment of ₦10,000 — yours forever, no subscription.">
+    <title>Auto Typer for Google Docs, Mac &amp; Windows | Human Typer</title>
+    <meta name="description" content="Auto typer that types your text into Google Docs or any app with real human keystrokes. Not a paste. macOS &amp; Windows. ₦10,000 once, no subscription.">
     <meta name="theme-color" content="#0a0c0d">
+    <!-- One canonical for all four hosts (the API hosts must keep serving, so
+         this tag, not redirects, is the dedupe mechanism) -->
+    <link rel="canonical" href="https://www.humantyper.online/">
 
     <meta property="og:type" content="website">
-    <meta property="og:title" content="Human Typer — Type anywhere, like a real person">
-    <meta property="og:description" content="Auto-type into any app with real, human-feeling keystrokes. One-time ₦10,000, yours forever. macOS & Windows.">
-    <meta property="og:image" content="/icon.png">
+    <meta property="og:url" content="https://www.humantyper.online/">
+    <meta property="og:site_name" content="Human Typer">
+    <meta property="og:title" content="Human Typer · An auto typer that types like a real person">
+    <meta property="og:description" content="Paste your text, hit start. It types into Google Docs or any app with natural rhythm, pauses, even the odd typo. ₦10,000 once, yours for life on Mac and Windows.">
+    <meta property="og:image" content="https://www.humantyper.online/og.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="Human Typer types your text into any app with real, human-feeling keystrokes">
     <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Human Typer · An auto typer that types like a real person">
+    <meta name="twitter:description" content="Paste your text, hit start. It types into Google Docs or any app with natural rhythm, pauses, even the odd typo. ₦10,000 once, yours for life on Mac and Windows.">
+    <meta name="twitter:image" content="https://www.humantyper.online/og.png">
 
     <link rel="icon" href="/icon.png">
     <link rel="apple-touch-icon" href="/icon.png">
+    <!-- Only the three faces visible above the fold; crossorigin is required
+         on font preloads even same-origin or the browser fetches twice -->
+    <link rel="preload" href="/fonts/Geist-400.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/fonts/Geist-700.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/fonts/GeistMono-400.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="styles.css">
+
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "@id": "https://www.humantyper.online/#software",
+      "name": "Human Typer",
+      "url": "https://www.humantyper.online/",
+      "image": "https://www.humantyper.online/og.png",
+      "description": "Human Typer types your text into any app with real, human-feeling keystrokes: genuine OS key events, natural variable rhythm, adjustable speed, and optional lifelike typos it fixes itself. Native desktop app for macOS (Apple Silicon and Intel) and Windows 10/11. Press Esc to stop instantly.",
+      "operatingSystem": "macOS, Windows",
+      "applicationCategory": "UtilitiesApplication",
+      "offers": [
+        {
+          "@type": "Offer",
+          "name": "Lifetime license",
+          "description": "One-time payment. Lifetime access on macOS and Windows, all features and future updates, one device per key. No subscription, no renewals.",
+          "price": "10000",
+          "priceCurrency": "NGN",
+          "url": "https://www.humantyper.online/#pricing",
+          "availability": "https://schema.org/InStock"
+        },
+        {
+          "@type": "Offer",
+          "name": "Monthly pass (30 days)",
+          "description": "One payment buys 30 days of full access on one device. No auto-charge; renew anytime by paying again and your key extends.",
+          "price": "2000",
+          "priceCurrency": "NGN",
+          "url": "https://www.humantyper.online/#pricing",
+          "availability": "https://schema.org/InStock"
+        }
+      ]
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "@id": "https://www.humantyper.online/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "How much is it, and is it really one-time?",
+          "acceptedAnswer": { "@type": "Answer", "text": "₦10,000, paid once. No subscription and no renewals: it's yours for life, on both macOS and Windows. (goghostwriter and similar tools charge every month.)" }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I get my license key?",
+          "acceptedAnswer": { "@type": "Answer", "text": "After you pay with Paystack, your key is emailed to the address you enter at checkout. Download the app, open it, and paste the key once to activate it forever on that machine." }
+        },
+        {
+          "@type": "Question",
+          "name": "What exactly does it do?",
+          "acceptedAnswer": { "@type": "Answer", "text": "It types text you give it into whatever app is focused, using real keyboard events with human-like timing. Think of it as auto typing software with a human touch: a tireless typist, not a robotic typing bot." }
+        },
+        {
+          "@type": "Question",
+          "name": "Which systems does it run on?",
+          "acceptedAnswer": { "@type": "Answer", "text": "macOS (Apple Silicon and Intel) and Windows 10/11. It's a native desktop app: no browser, no account." }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it work in Google Docs?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes. It types character by character with real keystrokes, so the document's version history fills in like a normal writing session instead of one big paste. Same for Word, forms, editors, anything with a cursor." }
+        },
+        {
+          "@type": "Question",
+          "name": "Is the typing detectable?",
+          "acceptedAnswer": { "@type": "Answer", "text": "It sends genuine OS keystrokes with natural, variable timing rather than a paste, so it avoids the obvious tells (constant rhythm, superhuman speed, zero errors). That said, no tool can promise it's undetectable; typing cadence is only one signal. Use it where automation is allowed." }
+        },
+        {
+          "@type": "Question",
+          "name": "Why does it ask for permissions on first launch?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Sending keystrokes to other apps is a privileged action. On macOS you enable it under Privacy & Security > Accessibility; on Windows your antivirus may simply prompt once. Nothing leaves your machine." }
+        },
+        {
+          "@type": "Question",
+          "name": "On Windows it opened in my web browser instead of its own window.",
+          "acceptedAnswer": { "@type": "Answer", "text": "The native window uses Microsoft's free WebView2 runtime, preinstalled on most Windows 10/11 machines. If yours doesn't have it, the app opens in your default browser instead and still works fully. For the native window, install the runtime from Microsoft's WebView2 page and reopen the app." }
+        },
+        {
+          "@type": "Question",
+          "name": "I lost my license key.",
+          "acceptedAnswer": { "@type": "Answer", "text": "Email me@rufaiahmed.com with your payment details and I'll resend it." }
+        }
+      ]
+    }
+    </script>
 </head>
 <body>
     <!-- Nav -->
@@ -45,8 +149,9 @@
             </p>
             <h1 class="hero-title">Type anywhere,<br><span class="hl-2">like a real person.</span></h1>
             <p class="hero-sub">
-                Human Typer types your text into <strong>any</strong> app with real, human-feeling
-                keystrokes — natural rhythm, lifelike pauses, your speed. Not a paste. Real keys.
+                Human Typer types your text into <strong>any</strong> app: Google Docs, Word, forms,
+                chat. Real, human-feeling keystrokes with natural rhythm, lifelike pauses, your speed.
+                Not a paste. Real keys.
             </p>
             <div class="hero-cta">
                 <a href="#pricing" id="hero-cta" class="btn btn-primary btn-lg"><span class="cta-text">Get it for ₦10,000 once</span></a>
@@ -128,7 +233,7 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
                     </span>
                     <h3>Mac &amp; Windows</h3>
-                    <p>A real native desktop window on both platforms. No browser tab, no account — just a one-time online activation.</p>
+                    <p>A native desktop auto typer for macOS and Windows. No browser tab, no account — just a one-time online activation.</p>
                 </div>
             </div>
         </section>
@@ -176,7 +281,7 @@
                 <div class="price-card">
                     <div class="price-badge">Lifetime license</div>
                     <div id="price-amount-lifetime" class="price-amount">₦10,000<span class="price-once"> once</span></div>
-                    <p class="price-compare">One payment, yours forever. A fraction of what goghostwriter charges every single month.</p>
+                    <p class="price-compare">One payment, yours forever. The goghostwriter alternative that costs a fraction of what they charge every single month.</p>
                     <ul class="price-list">
                         <li>Pay once, no renewals ever</li>
                         <li>Works on macOS &amp; Windows</li>
@@ -290,11 +395,15 @@
                 </details>
                 <details>
                     <summary>What exactly does it do?</summary>
-                    <p>It types text you give it into whatever app is focused, using real keyboard events with human-like timing. Think of it as a tireless typist that mimics a person at the keyboard.</p>
+                    <p>It types text you give it into whatever app is focused, using real keyboard events with human-like timing. Think of it as auto typing software with a human touch: a tireless typist, not a robotic typing bot.</p>
                 </details>
                 <details>
                     <summary>Which systems does it run on?</summary>
                     <p>macOS (Apple Silicon and Intel) and Windows 10/11. It's a native desktop app — no browser, no account.</p>
+                </details>
+                <details>
+                    <summary>Does it work in Google Docs?</summary>
+                    <p>Yes. It types character by character with real keystrokes, so the document's version history fills in like a normal writing session instead of one big paste. Same for Word, forms, editors, anything with a cursor.</p>
                 </details>
                 <details>
                     <summary>Is the typing detectable?</summary>
