@@ -69,13 +69,30 @@ module.exports = async (req, res) => {
     // product (the charges/payment-methods route rejects bank_transfer):
     // create/reuse the customer, then mint a dynamic account carrying OUR
     // reference and meta. Funding settles as a charge under that reference.
-    // POST /customers is idempotent by email (returns the existing id).
-    const cu = await flw("/customers", {
-      method: "POST",
-      headers: { "X-Idempotency-Key": `${reference}-cus` },
-      body: JSON.stringify({ email }),
-    });
-    const customerId = cu && cu.data && cu.data.id;
+    let customerId = null;
+    try {
+      const cu = await flw("/customers", {
+        method: "POST",
+        headers: { "X-Idempotency-Key": `${reference}-cus` },
+        body: JSON.stringify({ email }),
+      });
+      customerId = cu && cu.data && cu.data.id;
+    } catch (e) {
+      // "Customer already exists" (repeat buyer / renewal): look them up,
+      // accepting only an exact email match.
+      const enc = encodeURIComponent(email);
+      const lookup = async (path) => {
+        const f = await flw(path).catch(() => null);
+        const d = f && f.data;
+        const arr = Array.isArray(d) ? d : (d && (d.customers || d.items)) || [];
+        const m = arr.find((c) => c && c.email === email);
+        return (m && m.id) || null;
+      };
+      customerId =
+        (await lookup(`/customers?email=${enc}`)) ||
+        (await lookup(`/customers/search?email=${enc}`));
+      if (!customerId) throw e;
+    }
     if (!customerId) throw new Error("no customer id returned");
 
     const va = await flw("/virtual-accounts", {
