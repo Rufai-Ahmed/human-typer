@@ -65,23 +65,52 @@ module.exports = async (req, res) => {
     .slice(2, 10)}`;
 
   try {
-    const charge = await flw("/orchestration/direct-charges", {
+    // General flow (production rejects inline bank_transfer on the
+    // orchestrator): customer -> payment method -> charge.
+    let customerId = null;
+    try {
+      const cu = await flw("/customers", {
+        method: "POST",
+        headers: { "X-Idempotency-Key": `${reference}-cus` },
+        body: JSON.stringify({ email }),
+      });
+      customerId = cu && cu.data && cu.data.id;
+    } catch (e) {
+      // Possibly "already exists": look the customer up by email instead.
+      const found = await flw(
+        `/customers?email=${encodeURIComponent(email)}`,
+      ).catch(() => null);
+      const d = found && found.data;
+      const arr = Array.isArray(d) ? d : (d && (d.customers || d.items)) || [];
+      const match = arr.find((c) => c && c.email === email) || arr[0];
+      customerId = match && match.id;
+      if (!customerId) throw e;
+    }
+
+    const pm = await flw("/payment-methods", {
+      method: "POST",
+      headers: { "X-Idempotency-Key": `${reference}-pmd` },
+      body: JSON.stringify({
+        type: "bank_transfer",
+        bank_transfer: {
+          account_type: "dynamic",
+          account_expires_in: 3600, // seconds: buyer has an hour to transfer
+        },
+      }),
+    });
+    const paymentMethodId = pm && pm.data && pm.data.id;
+    if (!paymentMethodId) throw new Error("no payment_method id returned");
+
+    const charge = await flw("/charges", {
       method: "POST",
       headers: { "X-Idempotency-Key": reference },
       body: JSON.stringify({
-        amount,
-        currency: "NGN",
         reference,
+        currency: "NGN",
+        customer_id: customerId,
+        payment_method_id: paymentMethodId,
         redirect_url: "https://www.humantyper.online/",
-        payment_method: {
-          type: "bank_transfer",
-          bank_transfer: {
-            account_type: "dynamic",
-            account_expires_in: 3600, // seconds: buyer has an hour to transfer
-            account_display_name: "Human Typer",
-          },
-        },
-        customer: { email },
+        amount,
         // claim.js falls back to meta.email when the retrieved charge only
         // carries a customer id; plan/seats ride along for the owner alert.
         meta: { email, plan, seats: String(seats) },
