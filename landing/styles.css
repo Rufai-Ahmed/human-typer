@@ -944,3 +944,81 @@ details a:hover{ text-decoration:underline; }
   .grid,.steps,.dl-notes{ grid-template-columns:1fr; }
   .nav-links a:not(.btn){ display:none; }
 }
+
+/* ============================================================
+   HERO BACKDROP: "PHOSPHOR FEED"
+   Dot-matrix field (24px pitch) with a stronger register dot
+   every 4th position (96px, tractor-feed rhythm), crossed by one
+   frozen phosphor scan trace in the whitespace under the nav.
+   Painted as background layers on <body>: full-bleed with no
+   pseudo-elements, no 100vw, nothing to hit-test, no animation.
+   Token-driven, so it renders with whichever theme is active.
+   Layers, top to bottom:
+     1  vertical fade: pattern fully var(--bg) by 620px, above the mock
+     2  horizontal vignette: field dissolves before the viewport edges
+     3  1px phosphor trace at y=96px (nav bottom ~68px, eyebrow >=123px)
+     4  soft scan glow centered on the trace (peak 6% accent alpha)
+     5  register dots, 96px pitch (both dot tiles anchor at 12,12 and
+        96 = 4 * 24, so strong dots land exactly on fine-dot slots)
+     6  fine dot field, 24px pitch
+   Longhands only: the base body shorthand keeps supplying
+   background-color var(--bg). Tuning knobs if nav/hero metrics move:
+   trace y (96px), glow position (-34px), fade stops (260px / 620px).
+   ============================================================ */
+@supports (background: color-mix(in srgb, red, transparent)) {
+  body {
+    background-image:
+      linear-gradient(
+        to bottom,
+        color-mix(in srgb, var(--bg) 0%, transparent) 260px,
+        var(--bg) 620px
+      ),
+      linear-gradient(
+        to right,
+        var(--bg),
+        color-mix(in srgb, var(--bg) 0%, transparent) 18% 82%,
+        var(--bg)
+      ),
+      linear-gradient(
+        color-mix(in srgb, var(--accent) 24%, transparent),
+        color-mix(in srgb, var(--accent) 24%, transparent)
+      ),
+      linear-gradient(
+        to bottom,
+        color-mix(in srgb, var(--accent) 0%, transparent),
+        color-mix(in srgb, var(--accent) 6%, transparent) 50%,
+        color-mix(in srgb, var(--accent) 0%, transparent)
+      ),
+      radial-gradient(circle at 12px 12px, var(--border-strong) 1.25px, transparent 1.75px),
+      radial-gradient(circle at 12px 12px, var(--border) 1px, transparent 1.5px);
+    background-size:
+      100% 100%,
+      100% 100%,
+      100% 1px,
+      100% 260px,
+      96px 96px,
+      24px 24px;
+    background-position:
+      0 0,
+      0 0,
+      0 96px,
+      0 -34px,
+      0 0,
+      0 0;
+    background-repeat:
+      no-repeat,
+      no-repeat,
+      no-repeat,
+      no-repeat,
+      repeat,
+      repeat;
+  }
+
+  /* decoration only: drop it for contrast preference and print */
+  @media (prefers-contrast: more) {
+    body { background-image: none; }
+  }
+  @media print {
+    body { background-image: none; }
+  }
+}
