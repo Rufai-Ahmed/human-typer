@@ -19,10 +19,10 @@ module.exports = async (req, res) => {
     res.status(405).json({ ok: false, error: "Method not allowed" });
     return;
   }
-  if (!configured()) {
+  if (!configured() && !process.env.FLW_V3_SECRET_KEY) {
     res.status(503).json({
       ok: false,
-      error: "Payments are not configured yet (FLW_CLIENT_ID / FLW_CLIENT_SECRET missing)",
+      error: "Payments are not configured yet (Flutterwave keys missing)",
     });
     return;
   }
@@ -65,6 +65,43 @@ module.exports = async (req, res) => {
     .slice(2, 10)}`;
 
   try {
+    // Preferred: Flutterwave Standard (v3) hosted checkout — the buyer picks
+    // card / transfer / USSD on Flutterwave's page and gets redirected back.
+    // Activates as soon as FLW_V3_SECRET_KEY exists in env.
+    if (process.env.FLW_V3_SECRET_KEY) {
+      const r = await fetch("https://api.flutterwave.com/v3/payments", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.FLW_V3_SECRET_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          tx_ref: reference,
+          amount,
+          currency: "NGN",
+          redirect_url: "https://www.humantyper.online/",
+          customer: { email },
+          meta: { email, plan, seats: String(seats) },
+          customizations: {
+            title: "Human Typer",
+            logo: "https://www.humantyper.online/icon.png",
+          },
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      const link = j && j.data && j.data.link;
+      if (!r.ok || !link) {
+        res.status(502).json({
+          ok: false,
+          error: (j && j.message) || `flutterwave v3 payments failed (${r.status})`,
+        });
+        return;
+      }
+      res.status(200).json({ ok: true, mode: "hosted", reference, link });
+      return;
+    }
+
+    // Fallback (no v3 key yet): v4 Pay-With-Bank-Transfer.
     // PWBT on this production account works through the virtual-accounts
     // product (the charges/payment-methods route rejects bank_transfer):
     // create/reuse the customer, then mint a dynamic account carrying OUR

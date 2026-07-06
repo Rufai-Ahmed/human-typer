@@ -97,6 +97,17 @@ document.getElementById('year').textContent = new Date().getFullYear();
                 showMsg((d && d.error) || 'Could not start the payment. Please try again.', true);
                 return;
             }
+            if (d.mode === 'hosted' && d.link) {
+                // Flutterwave's hosted page (card / transfer / USSD); it sends
+                // the buyer back here with ?status=...&tx_ref=... when done.
+                try {
+                    sessionStorage.setItem('ht-pending',
+                        JSON.stringify({ email, plan, seats, reference: d.reference }));
+                } catch (e) { /* private mode: return flow degrades gracefully */ }
+                showMsg('Taking you to the secure Flutterwave checkout…', false);
+                window.location.href = d.link;
+                return;
+            }
             showMsg('Transfer the exact amount below. Your key ships the moment it lands.', false);
 
             const panel = document.createElement('div');
@@ -232,6 +243,62 @@ document.getElementById('year').textContent = new Date().getFullYear();
             }
             runCheckout({ email, plan: 'monthly', seats: 1, showMsg, msgEl });
         });
+    })();
+
+    // ---- Return from the hosted Flutterwave page (?status=...&tx_ref=...) ----
+    (() => {
+        const params = new URLSearchParams(window.location.search);
+        const txRef = params.get('tx_ref');
+        if (!txRef) return;
+        const status = (params.get('status') || '').toLowerCase();
+        history.replaceState(null, '', window.location.pathname + '#pricing');
+
+        let ctx = {};
+        try { ctx = JSON.parse(sessionStorage.getItem('ht-pending') || '{}'); } catch (e) {}
+        const isMonthly = ctx.plan === 'monthly';
+        const email = ctx.email || 'your email';
+        const seats = ctx.seats || 1;
+        const msgEl = document.getElementById(isMonthly ? 'buy-msg-monthly' : 'buy-msg-lifetime');
+        const showMsg = makeShowMsg(msgEl);
+        const pricing = document.getElementById('pricing');
+        if (pricing) pricing.scrollIntoView();
+
+        if (status && status !== 'successful' && status !== 'completed') {
+            showMsg('The payment was ' + status + '. Nothing was charged; try again whenever you are ready.', true);
+            return;
+        }
+        showMsg(isMonthly
+            ? 'Payment received. Issuing your monthly pass…'
+            : 'Payment received. Issuing your license key(s)…', false);
+
+        // Bank-transfer settles can lag the redirect a little: retry the claim.
+        let tries = 0;
+        const attempt = () => {
+            tries += 1;
+            fetch('/api/claim', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reference: txRef }),
+            }).then((r) => r.json()).then((c) => {
+                if (c && c.ok && c.status === 'key_sent') {
+                    try { sessionStorage.removeItem('ht-pending'); } catch (e) {}
+                    showMsg(successText({ isMonthly, email, count: c.count, seats }), false);
+                } else if (c && c.status === 'already_processed') {
+                    try { sessionStorage.removeItem('ht-pending'); } catch (e) {}
+                    showMsg('Your ' + (isMonthly ? 'monthly pass' : 'key') + ' was already emailed to '
+                        + email + '. Check your inbox and spam folder.', false);
+                } else if (c && (c.status === 'out_of_keys' || c.status === 'unrecognized_amount')) {
+                    showMsg('Payment received (ref: ' + txRef + '). Your key needs a manual touch and will '
+                        + 'be emailed shortly. Questions? me@rufaiahmed.com with that reference.', false);
+                } else if (tries < 8) {
+                    setTimeout(attempt, 4000);
+                } else {
+                    showMsg('Payment is confirming (ref: ' + txRef + '). Your key is emailed the moment it '
+                        + 'settles. If nothing arrives in a few minutes, email me@rufaiahmed.com with that reference.', false);
+                }
+            }).catch(() => { if (tries < 8) setTimeout(attempt, 4000); });
+        };
+        attempt();
     })();
 })();
 

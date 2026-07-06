@@ -45,7 +45,35 @@ async function fetchFlwCharge(refOrId) {
 // { ok, amountKobo, email, reference } — ok only for a REAL successful NGN
 // payment confirmed server-side with the provider.
 async function verifyPayment(reference) {
-  // Flutterwave v4 first (all new payments).
+  // Flutterwave v3 (Standard hosted checkout) first — the live path.
+  if (process.env.FLW_V3_SECRET_KEY) {
+    const vr = await fetch(
+      `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`,
+      { headers: { Authorization: `Bearer ${process.env.FLW_V3_SECRET_KEY}` } },
+    );
+    const v = await vr.json().catch(() => null);
+    const tx = v && v.data;
+    if (v && v.status === "success" && tx) {
+      // v3 amounts are naira. charged_amount can include a customer-borne
+      // fee while amount keeps the initialized price: grade on the smaller
+      // (the Paystack fee lesson), floors downstream forgive noise.
+      const amtN = Number(tx.amount) || 0;
+      const chargedN = Number(tx.charged_amount) || 0;
+      const naira = chargedN > 0 ? Math.min(amtN, chargedN) : amtN;
+      return {
+        ok: tx.status === "successful" && (tx.currency || "NGN") === "NGN",
+        amountKobo: Math.round(naira * 100),
+        email:
+          (tx.customer && tx.customer.email) ||
+          (tx.meta && tx.meta.email) ||
+          null,
+        reference: tx.tx_ref || reference,
+      };
+    }
+    // Not found in v3: fall through (v4-era or Paystack-era reference).
+  }
+
+  // Flutterwave v4 (bank-transfer fallback era).
   if (flwConfigured()) {
     try {
       const c = await fetchFlwCharge(reference);
@@ -238,10 +266,14 @@ module.exports = async (req, res) => {
       return;
     }
   }
-  if (!flwConfigured() && !process.env.PAYSTACK_SECRET_KEY) {
+  if (
+    !process.env.FLW_V3_SECRET_KEY &&
+    !flwConfigured() &&
+    !process.env.PAYSTACK_SECRET_KEY
+  ) {
     res.status(500).json({
       ok: false,
-      error: "Server not configured: FLW_CLIENT_ID / FLW_CLIENT_SECRET",
+      error: "Server not configured: Flutterwave keys missing",
     });
     return;
   }
@@ -253,11 +285,11 @@ module.exports = async (req, res) => {
     body = {};
   }
   body = body || {};
-  // Browser polls send { reference }; the Flutterwave charge.completed webhook
-  // carries data.reference (ours) and data.id (chg_...).
+  // Browser polls send { reference }. Flutterwave webhooks carry data.tx_ref
+  // (v3 Standard) or data.reference / data.id (v4 charge.completed).
   const reference =
     body.reference ||
-    (body.data && (body.data.reference || body.data.id));
+    (body.data && (body.data.tx_ref || body.data.reference || body.data.id));
   if (!reference) {
     res.status(400).json({ ok: false, error: "Missing payment reference" });
     return;
