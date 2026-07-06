@@ -36,6 +36,13 @@ async function rpc(fn, args) {
   return r.json();
 }
 
+// Everyone who gets the "money arrived" alerts. PAYMENT_ALERT_EMAIL (comma-
+// separated) adds recipients on top of the built-in owner addresses.
+const PAYMENT_ALERT_TO = [...new Set(
+  `${process.env.PAYMENT_ALERT_EMAIL || ""},payment@rufaiahmed.com,mailoctavemusic@gmail.com`
+    .split(",").map((s) => s.trim()).filter(Boolean),
+)];
+
 async function sendEmail(to, subject, html) {
   const from =
     process.env.MAIL_FROM || "Human Typer <keys@updates.rufaiahmed.com>";
@@ -235,7 +242,7 @@ module.exports = async (req, res) => {
       // manually instead of dropping it like a failed verify.
       try {
         await sendEmail(
-          process.env.PAYMENT_ALERT_EMAIL || "payment@rufaiahmed.com",
+          PAYMENT_ALERT_TO,
           `Human Typer payment needs manual review: ${nairaFromKobo(paidKobo)}`,
           paymentAlertHtml({
             email: (tx.customer && tx.customer.email) || "unknown",
@@ -259,7 +266,7 @@ module.exports = async (req, res) => {
     const alertOwner = async (planLine) => {
       try {
         await sendEmail(
-          process.env.PAYMENT_ALERT_EMAIL || "payment@rufaiahmed.com",
+          PAYMENT_ALERT_TO,
           `New Human Typer payment: ${nairaFromKobo(paidKobo)} from ${email}`,
           paymentAlertHtml({ email, amountKobo: paidKobo, reference, planLine }),
         );
