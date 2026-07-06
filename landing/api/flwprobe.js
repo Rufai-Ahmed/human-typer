@@ -39,16 +39,6 @@ module.exports = async (req, res) => {
     }
   };
 
-  const pm = (payload) =>
-    flw("/payment-methods", { method: "POST", body: JSON.stringify(payload) });
-
-  await tryIt("pm_bank_transfer", () =>
-    pm({ type: "bank_transfer", bank_transfer: { account_type: "dynamic" } }));
-  await tryIt("pm_pwbt", () => pm({ type: "pwbt" }));
-  await tryIt("pm_virtual_account", () => pm({ type: "virtual_account" }));
-  await tryIt("pm_bogus", () => pm({ type: "zzz_bogus" }));
-  await tryIt("pm_ussd", () => pm({ type: "ussd", ussd: { account_bank: "058" } }));
-
   // The PWBT guide's own route: customers + virtual-accounts.
   const cust = await tryIt("customer", async () => {
     try {
@@ -65,19 +55,34 @@ module.exports = async (req, res) => {
     }
   });
   if (cust && cust.id) {
-    await tryIt("virtual_account", () =>
+    const ourRef = `HTPROBE2-${Date.now().toString(36)}`;
+    results.our_reference = ourRef;
+    const va = await tryIt("va_create", () =>
       flw("/virtual-accounts", {
         method: "POST",
         body: JSON.stringify({
-          reference: `HTPROBE-${Date.now().toString(36)}`,
+          reference: ourRef,
           customer_id: cust.id,
           amount: 2000,
           currency: "NGN",
           account_type: "dynamic",
           expiry: 600,
           narration: "Human Typer",
+          meta: { email: "probe@humantyper.online", plan: "probe" },
         }),
       }));
+    results.va_create_full = va || null;
+    if (va && va.id) {
+      const got = await tryIt("va_get", () => flw(`/virtual-accounts/${va.id}`));
+      results.va_get_full = got || null;
+    }
+    // Learn the charges list envelope shape (expected empty until funded).
+    try {
+      const cl = await flw(`/charges?reference=${encodeURIComponent(ourRef)}`);
+      results.charges_list_raw = cl;
+    } catch (e) {
+      results.charges_list_raw = { error: String(e.message), status: e.status };
+    }
   }
 
   res.status(200).json(results);
