@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>human_typer · admin</title>
+    <meta name="theme-color" content="#0a0c0d">
+    <link rel="icon" href="/icon.png">
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        .adm{ max-width:1080px; margin:0 auto; padding:48px 24px 96px; }
+        .adm h1{ font-family:var(--font-mono); font-size:1.4rem; margin-bottom:6px; }
+        .adm-sub{ color:var(--text-muted); font-size:var(--text-sm); margin-bottom:28px; }
+        .adm section{ margin-top:36px; }
+        .adm h2{ font-family:var(--font-mono); font-size:var(--text-sm); text-transform:uppercase;
+                 letter-spacing:var(--ls-eyebrow); color:var(--text-muted); margin-bottom:12px; }
+        .tiles{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+        .tile{ background:var(--surface-1); border:1px solid var(--border); border-radius:10px; padding:14px; }
+        .tile b{ display:block; font-family:var(--font-mono); font-size:1.5rem; color:var(--text); }
+        .tile span{ color:var(--text-subtle); font-size:var(--text-eyebrow); text-transform:uppercase; letter-spacing:0.06em; }
+        .tile.acc b{ color:var(--accent); }
+        .bar{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+        .bar input[type=text], .bar input[type=password], textarea{
+            background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
+            color:var(--text); font-family:var(--font-mono); font-size:var(--text-sm);
+            padding:9px 12px; min-width:260px; }
+        textarea{ width:100%; min-height:110px; }
+        .chip{ background:var(--surface-1); border:1px solid var(--border); border-radius:999px;
+               color:var(--text-muted); font-family:var(--font-mono); font-size:var(--text-eyebrow);
+               padding:6px 12px; cursor:pointer; }
+        .chip.on{ color:var(--accent); border-color:var(--accent); }
+        .btn-a{ background:var(--surface-3); border:1px solid var(--border-strong); border-radius:8px;
+                color:var(--text); font-family:var(--font-mono); font-size:var(--text-sm);
+                padding:9px 14px; cursor:pointer; }
+        .btn-a:hover{ border-color:var(--accent); }
+        .btn-a.primary{ background:var(--accent); color:var(--on-accent); border-color:var(--accent); font-weight:600; }
+        .tbl-wrap{ overflow-x:auto; border:1px solid var(--border); border-radius:10px; }
+        table.adm-t{ width:100%; border-collapse:collapse; font-family:var(--font-mono); font-size:12.5px; }
+        .adm-t th{ text-align:left; color:var(--text-subtle); text-transform:uppercase; font-size:10.5px;
+                   letter-spacing:0.06em; padding:10px 12px; border-bottom:1px solid var(--border); white-space:nowrap; }
+        .adm-t td{ padding:9px 12px; border-bottom:1px solid var(--border); color:var(--text-secondary); white-space:nowrap; }
+        .adm-t tr:last-child td{ border-bottom:none; }
+        .adm-t .k{ color:var(--text); user-select:all; }
+        .st-active{ color:var(--accent); } .st-revoked{ color:var(--danger-400); }
+        .row-act{ display:flex; gap:6px; }
+        .row-act button{ background:none; border:1px solid var(--border); border-radius:6px;
+                         color:var(--text-muted); font-family:var(--font-mono); font-size:10.5px;
+                         padding:3px 8px; cursor:pointer; }
+        .row-act button:hover{ color:var(--text); border-color:var(--accent); }
+        #msg{ position:fixed; bottom:18px; left:50%; transform:translateX(-50%);
+              background:var(--surface-3); border:1px solid var(--border-strong); border-radius:8px;
+              color:var(--text); font-family:var(--font-mono); font-size:var(--text-sm);
+              padding:10px 16px; display:none; max-width:90vw; }
+        #msg.err{ border-color:var(--danger-400); color:var(--danger-400); }
+        #login{ max-width:380px; margin:18vh auto 0; text-align:center; }
+        #login input{ width:100%; margin:12px 0; }
+        .hidden{ display:none !important; }
+    </style>
+</head>
+<body>
+    <div id="login" class="adm">
+        <h1><span class="tic">▸</span> human_typer admin</h1>
+        <p class="adm-sub">Owner access only.</p>
+        <input id="pw" type="password" placeholder="admin password" autocomplete="current-password">
+        <button id="login-btn" class="btn-a primary" style="width:100%">Unlock</button>
+    </div>
+
+    <div id="app" class="adm hidden">
+        <h1><span class="tic">▸</span> human_typer admin</h1>
+        <p class="adm-sub">Licenses, payments, and the key pool. <a href="/" style="color:var(--accent-text)">← site</a></p>
+
+        <section>
+            <h2>▸ Stats</h2>
+            <div id="tiles" class="tiles"></div>
+        </section>
+
+        <section>
+            <h2>▸ Licenses</h2>
+            <div class="bar">
+                <input id="q" type="text" placeholder="search email / key / reference">
+                <button id="search-btn" class="btn-a">Search</button>
+                <span class="chip on" data-f="all">all</span>
+                <span class="chip" data-f="sold">sold</span>
+                <span class="chip" data-f="monthly">monthly</span>
+                <span class="chip" data-f="lifetime">lifetime</span>
+                <span class="chip" data-f="pool">pool</span>
+                <span class="chip" data-f="revoked">revoked</span>
+            </div>
+            <div class="tbl-wrap"><table class="adm-t" id="lic-t">
+                <thead><tr><th>Key</th><th>Status</th><th>Plan</th><th>Email</th><th>Expires</th><th>Device</th><th>Ref</th><th>Actions</th></tr></thead>
+                <tbody></tbody>
+            </table></div>
+        </section>
+
+        <section>
+            <h2>▸ Monthly payments</h2>
+            <div class="tbl-wrap"><table class="adm-t" id="pay-t">
+                <thead><tr><th>When</th><th>Reference</th><th>Email</th><th>Key</th><th>Days</th></tr></thead>
+                <tbody></tbody>
+            </table></div>
+        </section>
+
+        <section>
+            <h2>▸ Add keys to the pool</h2>
+            <textarea id="new-keys" placeholder="Paste new license keys, one per line (generated with gen_licenses.py)"></textarea>
+            <div class="bar" style="margin-top:10px">
+                <button id="add-btn" class="btn-a primary">Add keys</button>
+            </div>
+        </section>
+    </div>
+
+    <div id="msg"></div>
+
+    <script>
+    (() => {
+        const $ = (s) => document.querySelector(s);
+        const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
+            (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+        let filter = 'all';
+
+        const msg = (text, err) => {
+            const el = $('#msg');
+            el.textContent = text;
+            el.className = err ? 'err' : '';
+            el.style.display = 'block';
+            clearTimeout(msg.t);
+            msg.t = setTimeout(() => { el.style.display = 'none'; }, 4000);
+        };
+
+        const api = (payload) => fetch('/api/admin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json',
+                       'x-admin-key': sessionStorage.getItem('ht-admin') || '' },
+            body: JSON.stringify(payload),
+        }).then(async (r) => {
+            const d = await r.json().catch(() => ({}));
+            if (r.status === 401) { lock(); throw new Error('Wrong password'); }
+            if (!d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+            return d;
+        });
+
+        function lock() {
+            sessionStorage.removeItem('ht-admin');
+            $('#app').classList.add('hidden');
+            $('#login').classList.remove('hidden');
+        }
+
+        const oops = (e) => msg((e && e.message) || 'Something went wrong', true);
+
+        // Exchange the password for a short-lived token; only the token is stored.
+        async function unlock(pw) {
+            try {
+                const r = await fetch('/api/admin', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'login', password: pw }),
+                });
+                const d = await r.json().catch(() => ({}));
+                if (!d.ok || !d.token) throw new Error(d.error || 'Login failed');
+                sessionStorage.setItem('ht-admin', d.token);
+                await enter();
+            } catch (e) { oops(e); }
+        }
+
+        async function enter() {
+            await refreshStats();
+            $('#login').classList.add('hidden');
+            $('#app').classList.remove('hidden');
+            loadLicenses().catch(oops);
+            loadPayments().catch(oops);
+        }
+
+        async function refreshStats() {
+            const { stats: s } = await api({ action: 'stats' });
+            const t = [
+                ['pool', s.pool, 'keys unsold', s.pool < 10],
+                ['sold', s.sold, 'keys sold'],
+                ['monthlyActive', s.monthlyActive, 'monthly active'],
+                ['monthlyExpiring', s.monthlyExpiring, 'expiring in 7d'],
+                ['activated', s.activated, 'devices bound'],
+                ['revoked', s.revoked, 'revoked'],
+                ['rev', '₦' + Number(s.revenueEstimateNaira).toLocaleString('en-NG'), 'revenue est.', true],
+            ];
+            $('#tiles').innerHTML = t.map(([k, v, label, acc]) =>
+                '<div class="tile' + (acc ? ' acc' : '') + '"><b>' + esc(v) + '</b><span>' + esc(label) + '</span></div>'
+            ).join('');
+        }
+
+        function fmtDate(iso) {
+            if (!iso) return '—';
+            const d = new Date(iso);
+            return d.toISOString().slice(0, 10);
+        }
+
+        async function loadLicenses() {
+            const { rows } = await api({ action: 'licenses', q: $('#q').value, filter });
+            $('#lic-t tbody').innerHTML = rows.map((r) => {
+                const acts = [];
+                if (r.email) acts.push('<button data-a="resend" data-k="' + esc(r.key) + '">resend</button>');
+                if (r.device_id) acts.push('<button data-a="unbind" data-k="' + esc(r.key) + '">unbind</button>');
+                if (r.plan === 'monthly' && r.sold) acts.push('<button data-a="extend" data-k="' + esc(r.key) + '">+30d</button>');
+                acts.push(r.status === 'revoked'
+                    ? '<button data-a="restore" data-k="' + esc(r.key) + '">restore</button>'
+                    : '<button data-a="revoke" data-k="' + esc(r.key) + '">revoke</button>');
+                return '<tr>'
+                    + '<td class="k">' + esc(r.key) + '</td>'
+                    + '<td class="st-' + esc(r.status) + '">' + esc(r.status) + (r.sold ? '' : ' · pool') + '</td>'
+                    + '<td>' + esc(r.plan) + '</td>'
+                    + '<td>' + esc(r.email || '—') + '</td>'
+                    + '<td>' + fmtDate(r.expires_at) + '</td>'
+                    + '<td>' + (r.device_id ? 'bound' : '—') + '</td>'
+                    + '<td>' + esc((r.payment_ref || '').slice(0, 18)) + '</td>'
+                    + '<td><div class="row-act">' + acts.join('') + '</div></td>'
+                    + '</tr>';
+            }).join('') || '<tr><td colspan="8">Nothing matches.</td></tr>';
+        }
+
+        async function loadPayments() {
+            const { rows } = await api({ action: 'payments' });
+            $('#pay-t tbody').innerHTML = rows.map((r) =>
+                '<tr><td>' + fmtDate(r.processed_at) + '</td>'
+                + '<td>' + esc(r.payment_ref) + '</td>'
+                + '<td>' + esc(r.email || '—') + '</td>'
+                + '<td class="k">' + esc(r.key || '—') + '</td>'
+                + '<td>' + esc(r.days) + '</td></tr>'
+            ).join('') || '<tr><td colspan="5">No monthly payments yet.</td></tr>';
+        }
+
+        $('#login-btn').addEventListener('click', () => unlock($('#pw').value));
+        $('#pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') unlock($('#pw').value); });
+        $('#search-btn').addEventListener('click', () => loadLicenses().catch(oops));
+        $('#q').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadLicenses().catch(oops); });
+
+        document.querySelectorAll('.chip').forEach((c) => c.addEventListener('click', () => {
+            document.querySelectorAll('.chip').forEach((x) => x.classList.remove('on'));
+            c.classList.add('on');
+            filter = c.getAttribute('data-f');
+            loadLicenses().catch(oops);
+        }));
+
+        $('#lic-t').addEventListener('click', async (e) => {
+            const b = e.target.closest('button[data-a]');
+            if (!b) return;
+            const a = b.getAttribute('data-a'), k = b.getAttribute('data-k');
+            if ((a === 'revoke') && !confirm('Revoke ' + k + '? The app blocks it on the next online check.')) return;
+            try {
+                const payload = { action: a, key: k };
+                if (a === 'extend') payload.days = 30;
+                const d = await api(payload);
+                msg(a === 'resend' ? 'Emailed ' + d.sent_to : a + ' done');
+                loadLicenses().catch(oops);
+                refreshStats().catch(oops);
+            } catch (err) { oops(err); }
+        });
+
+        $('#add-btn').addEventListener('click', async () => {
+            try {
+                const d = await api({ action: 'addkeys', keys: $('#new-keys').value });
+                msg('Added ' + d.inserted + ' key(s); ' + d.duplicates + ' duplicate(s), '
+                    + d.invalid + ' invalid token(s) skipped.');
+                $('#new-keys').value = '';
+                refreshStats().catch(oops);
+            } catch (err) { oops(err); }
+        });
+
+        if (sessionStorage.getItem('ht-admin')) enter().catch(() => lock());
+    })();
+    </script>
+</body>
+</html>
