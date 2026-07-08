@@ -67,6 +67,7 @@ module.exports = async (req, res) => {
           account_bank: code,
           account_number: "7052072208",
           business_name: "Human Typer Split",
+          business_email: "mailoctavemusic@gmail.com",
           business_mobile: "07052072208",
           country: "NG",
           split_type: "percentage",
