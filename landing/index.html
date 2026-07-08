@@ -121,6 +121,8 @@
     }
     </script>
 
+    <!-- Umami (traffic + conversion funnel), public pages only -->
+    <script defer src="https://cloud.umami.is/script.js" data-website-id="94eb0ac7-4018-4a36-a6d6-d4c7f472faaf"></script>
     <!-- Microsoft Clarity (heatmaps + session recordings), public pages only -->
     <script type="text/javascript">
     (function(c,l,a,r,i,t,y){
@@ -362,8 +364,8 @@
                 <h2 class="section-title">Download</h2>
                 <p class="section-sub">Free to download — activate it with the license key from your purchase. <strong>Windows opens in one click;</strong> macOS needs a quick one-time approval (steps below).</p>
                 <div class="dl-buttons">
-                    <a class="btn btn-primary btn-lg" href="/api/download?os=windows" rel="noopener">Download for Windows</a>
-                    <a class="btn btn-primary btn-lg" href="/api/download?os=mac" rel="noopener">Download for macOS</a>
+                    <a class="btn btn-primary btn-lg" href="/api/download?os=windows" rel="noopener" data-umami-event="download" data-umami-event-os="windows">Download for Windows</a>
+                    <a class="btn btn-primary btn-lg" href="/api/download?os=mac" rel="noopener" data-umami-event="download" data-umami-event-os="mac">Download for macOS</a>
                 </div>
                 <p class="dl-alt">The macOS download is universal: it runs natively on both Apple Silicon and Intel Macs.</p>
 

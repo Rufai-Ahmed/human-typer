@@ -43,6 +43,8 @@ document.getElementById('year').textContent = new Date().getFullYear();
     const naira = (kobo) => '₦' + Math.round(kobo / 100).toLocaleString('en-NG');
     const nairaFromN = (n) => '₦' + Number(n).toLocaleString('en-NG');
     const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+    // Umami funnel events; never let analytics break checkout.
+    const track = (name, data) => { try { if (window.umami) window.umami.track(name, data); } catch (e) {} };
 
     function makeShowMsg(msgEl) {
         return (text, isError) => {
@@ -97,6 +99,7 @@ document.getElementById('year').textContent = new Date().getFullYear();
                 showMsg((d && d.error) || 'Could not start the payment. Please try again.', true);
                 return;
             }
+            track('checkout-started', { plan, mode: d.mode === 'hosted' ? 'hosted' : 'transfer' });
             if (d.mode === 'hosted' && d.link) {
                 // Flutterwave's hosted page (card / transfer / USSD); it sends
                 // the buyer back here with ?status=...&tx_ref=... when done.
@@ -158,6 +161,7 @@ document.getElementById('year').textContent = new Date().getFullYear();
                 }).then((r) => r.json()).then((c) => {
                     if (c && c.ok && c.status === 'key_sent') {
                         clearActiveRun();
+                        track('payment-completed', { plan: isMonthly ? 'monthly' : 'lifetime' });
                         showMsg(successText({ isMonthly, email, count: c.count, seats }), false);
                     } else if (c && c.status === 'already_processed') {
                         clearActiveRun();
@@ -216,6 +220,7 @@ document.getElementById('year').textContent = new Date().getFullYear();
         refresh();
 
         btn.addEventListener('click', () => {
+            track('buy-clicked', { plan: 'lifetime', seats });
             const email = (emailInput.value || '').trim();
             if (!validEmail(email)) {
                 showMsg('Please enter a valid email. That is where your key is sent.', true);
@@ -235,6 +240,7 @@ document.getElementById('year').textContent = new Date().getFullYear();
         const showMsg = makeShowMsg(msgEl);
 
         btn.addEventListener('click', () => {
+            track('buy-clicked', { plan: 'monthly' });
             const email = (emailInput.value || '').trim();
             if (!validEmail(email)) {
                 showMsg('Please enter a valid email. That is where your key is sent.', true);
@@ -282,6 +288,7 @@ document.getElementById('year').textContent = new Date().getFullYear();
             }).then((r) => r.json()).then((c) => {
                 if (c && c.ok && c.status === 'key_sent') {
                     try { sessionStorage.removeItem('ht-pending'); } catch (e) {}
+                    track('payment-completed', { plan: isMonthly ? 'monthly' : 'lifetime' });
                     showMsg(successText({ isMonthly, email, count: c.count, seats }), false);
                 } else if (c && c.status === 'already_processed') {
                     try { sessionStorage.removeItem('ht-pending'); } catch (e) {}
