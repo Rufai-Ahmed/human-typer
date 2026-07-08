@@ -58,6 +58,19 @@ module.exports = async (req, res) => {
       split_type: s.split_type, split_value: s.split_value,
     }));
 
+    if (doWhat === "fix") {
+      // Verified semantics: split_value = the MAIN account's share. For OPay
+      // to receive 30%, the merchant's split_value must be 0.7.
+      const target = out.existing_subaccounts.find(
+        (s) => s.subaccount_id === "RS_A34CBA26455A4B3F565F08416CCAD88F",
+      );
+      if (!target) throw new Error("subaccount not found");
+      out.fix = await v3(`/subaccounts/${target.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ split_type: "percentage", split_value: 0.7 }),
+      });
+    }
+
     if (doWhat === "create") {
       const code = out.opay_banks[0] && out.opay_banks[0].code;
       if (!code) throw new Error("OPay not found in the NG bank list");
