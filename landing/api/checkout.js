@@ -86,6 +86,13 @@ module.exports = async (req, res) => {
             title: "Human Typer",
             logo: "https://www.humantyper.online/icon.png",
           },
+          // Income split: this subaccount (owner-configured, defaults to the
+          // OPay partner account) takes its dashboard-defined 30% cut of every
+          // payment. Set FLW_SPLIT_SUBACCOUNT=off to disable without a deploy.
+          subaccounts:
+            process.env.FLW_SPLIT_SUBACCOUNT === "off"
+              ? undefined
+              : [{ id: process.env.FLW_SPLIT_SUBACCOUNT || "RS_A34CBA26455A4B3F565F08416CCAD88F" }],
         }),
       });
       const j = await r.json().catch(() => ({}));
