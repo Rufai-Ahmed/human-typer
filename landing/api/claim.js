@@ -24,6 +24,7 @@
 //           PRICE_KOBO (default 1000000), MONTHLY_KOBO, DOWNLOAD_URL, FLW_ENV
 
 const PAYSTACK = "https://api.paystack.co";
+const crypto = require("crypto");
 const { flw, configured: flwConfigured } = require("./_flw");
 
 // Fetch a charge from Flutterwave v4 by our merchant reference (HT-...) or by
@@ -129,6 +130,58 @@ async function verifyPayment(reference) {
   }
 
   return { ok: false, amountKobo: 0, email: null, reference };
+}
+
+// --- Key pool auto top-up ---------------------------------------------------
+// Same format and no-lookalikes alphabet as gen_licenses.py. After a claim
+// consumes keys, if fewer than KEY_POOL_MIN unsold ones remain we mint
+// KEY_POOL_BATCH fresh ones straight into Supabase, so the pool never runs
+// dry mid-sale. Auto-minted keys exist only in Supabase (see them under the
+// admin dashboard's "pool" filter). Never throws: a top-up failure must not
+// break the claim that triggered it; the "pool is EMPTY" alert stays as the
+// last-resort alarm.
+const KEY_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+function mintKey() {
+  const g = () => Array.from({ length: 5 },
+    () => KEY_ALPHABET[crypto.randomInt(KEY_ALPHABET.length)]).join("");
+  return `HT-${g()}-${g()}-${g()}`;
+}
+
+async function maybeTopUpPool() {
+  try {
+    const min = parseInt(process.env.KEY_POOL_MIN || "10", 10);
+    const batch = parseInt(process.env.KEY_POOL_BATCH || "50", 10);
+    if (min <= 0 || batch <= 0) return; // KEY_POOL_MIN=0 disables auto top-up
+    const base = process.env.SUPABASE_URL.replace(/\/$/, "");
+    const headers = {
+      apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+    };
+    const c = await fetch(
+      `${base}/rest/v1/licenses?select=key&sold=eq.false&status=eq.active&limit=1`,
+      { headers: { ...headers, Prefer: "count=exact" } },
+    );
+    const left = parseInt((c.headers.get("content-range") || "/0").split("/")[1], 10) || 0;
+    if (left >= min) return;
+    const keys = Array.from({ length: batch }, mintKey);
+    const ins = await fetch(`${base}/rest/v1/licenses`, {
+      method: "POST",
+      headers: { ...headers, Prefer: "resolution=ignore-duplicates,return=representation" },
+      body: JSON.stringify(keys.map((k) => ({ key: k }))),
+    });
+    const added = ins.ok ? ((await ins.json()) || []).length : 0;
+    try {
+      await sendEmail(
+        process.env.ADMIN_EMAIL || "me@rufaiahmed.com",
+        `Human Typer: key pool auto-topped up (+${added})`,
+        `<p>The unsold pool was down to <strong>${left}</strong> key(s), below the
+         ${min}-key threshold, so ${added} fresh key(s) were auto-generated and added.
+         They live in Supabase only; see the admin dashboard's "pool" filter.</p>`,
+      );
+    } catch (_) {}
+  } catch (_) {}
 }
 
 async function rpc(fn, args) {
@@ -422,6 +475,7 @@ module.exports = async (req, res) => {
         "Your Human Typer monthly pass",
         monthlyEmailHtml(key, expiresAt, downloadUrl),
       );
+      await maybeTopUpPool();
       res.status(200).json({
         ok: true,
         status: "key_sent",
@@ -486,6 +540,7 @@ module.exports = async (req, res) => {
         ? `Your ${count} Human Typer license keys`
         : "Your Human Typer license key";
     await sendEmail(email, subject, keysEmailHtml(keys, downloadUrl));
+    await maybeTopUpPool();
     res.status(200).json({ ok: true, status: "key_sent", email, plan: "lifetime", count });
   } catch (err) {
     // 500 lets the provider's webhook retry on transient failures.
