@@ -48,6 +48,13 @@
                          color:var(--text-muted); font-family:var(--font-mono); font-size:10.5px;
                          padding:3px 8px; cursor:pointer; }
         .row-act button:hover{ color:var(--text); border-color:var(--accent); }
+        .pager{ display:flex; align-items:center; gap:12px; margin-top:10px;
+                font-family:var(--font-mono); font-size:12px; color:var(--text-muted); }
+        .pager button{ background:var(--surface-1); border:1px solid var(--border); border-radius:6px;
+                       color:var(--text-secondary); font-family:var(--font-mono); font-size:12px;
+                       padding:5px 12px; cursor:pointer; }
+        .pager button:hover:not(:disabled){ border-color:var(--accent); color:var(--text); }
+        .pager button:disabled{ opacity:0.35; cursor:default; }
         #msg{ position:fixed; bottom:18px; left:50%; transform:translateX(-50%);
               background:var(--surface-3); border:1px solid var(--border-strong); border-radius:8px;
               color:var(--text); font-family:var(--font-mono); font-size:var(--text-sm);
@@ -91,6 +98,11 @@
                 <thead><tr><th>Key</th><th>Status</th><th>Plan</th><th>Email</th><th>Expires</th><th>Device</th><th>Ref</th><th>Actions</th></tr></thead>
                 <tbody></tbody>
             </table></div>
+            <div class="pager">
+                <button id="lic-prev">‹ prev</button>
+                <span id="lic-info"></span>
+                <button id="lic-next">next ›</button>
+            </div>
         </section>
 
         <section>
@@ -99,6 +111,11 @@
                 <thead><tr><th>When</th><th>Reference</th><th>Email</th><th>Key</th><th>Days</th></tr></thead>
                 <tbody></tbody>
             </table></div>
+            <div class="pager">
+                <button id="pay-prev">‹ prev</button>
+                <span id="pay-info"></span>
+                <button id="pay-next">next ›</button>
+            </div>
         </section>
 
         <section>
@@ -118,6 +135,16 @@
         const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
             (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
         let filter = 'all';
+        let licPage = 0, payPage = 0;
+
+        function renderPager(prefix, page, pageSize, total, count) {
+            const info = $('#' + prefix + '-info');
+            const from = total === 0 ? 0 : page * pageSize + 1;
+            const to = page * pageSize + count;
+            info.textContent = from + '-' + to + ' of ' + total;
+            $('#' + prefix + '-prev').disabled = page <= 0;
+            $('#' + prefix + '-next').disabled = (page + 1) * pageSize >= total;
+        }
 
         const msg = (text, err) => {
             const el = $('#msg');
@@ -194,7 +221,10 @@
         }
 
         async function loadLicenses() {
-            const { rows } = await api({ action: 'licenses', q: $('#q').value, filter });
+            const { rows, total, page, pageSize } = await api(
+                { action: 'licenses', q: $('#q').value, filter, page: licPage });
+            if (!rows.length && page > 0) { licPage = 0; return loadLicenses(); }
+            renderPager('lic', page, pageSize, total, rows.length);
             $('#lic-t tbody').innerHTML = rows.map((r) => {
                 const acts = [];
                 if (r.email) acts.push('<button data-a="resend" data-k="' + esc(r.key) + '">resend</button>');
@@ -217,7 +247,9 @@
         }
 
         async function loadPayments() {
-            const { rows } = await api({ action: 'payments' });
+            const { rows, total, page, pageSize } = await api({ action: 'payments', page: payPage });
+            if (!rows.length && page > 0) { payPage = 0; return loadPayments(); }
+            renderPager('pay', page, pageSize, total, rows.length);
             $('#pay-t tbody').innerHTML = rows.map((r) =>
                 '<tr><td>' + fmtDate(r.processed_at) + '</td>'
                 + '<td>' + esc(r.payment_ref) + '</td>'
@@ -229,15 +261,21 @@
 
         $('#login-btn').addEventListener('click', () => unlock($('#pw').value));
         $('#pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') unlock($('#pw').value); });
-        $('#search-btn').addEventListener('click', () => loadLicenses().catch(oops));
-        $('#q').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadLicenses().catch(oops); });
+        $('#search-btn').addEventListener('click', () => { licPage = 0; loadLicenses().catch(oops); });
+        $('#q').addEventListener('keydown', (e) => { if (e.key === 'Enter') { licPage = 0; loadLicenses().catch(oops); } });
 
         document.querySelectorAll('.chip').forEach((c) => c.addEventListener('click', () => {
             document.querySelectorAll('.chip').forEach((x) => x.classList.remove('on'));
             c.classList.add('on');
             filter = c.getAttribute('data-f');
+            licPage = 0;
             loadLicenses().catch(oops);
         }));
+
+        $('#lic-prev').addEventListener('click', () => { if (licPage > 0) { licPage--; loadLicenses().catch(oops); } });
+        $('#lic-next').addEventListener('click', () => { licPage++; loadLicenses().catch(oops); });
+        $('#pay-prev').addEventListener('click', () => { if (payPage > 0) { payPage--; loadPayments().catch(oops); } });
+        $('#pay-next').addEventListener('click', () => { payPage++; loadPayments().catch(oops); });
 
         $('#lic-t').addEventListener('click', async (e) => {
             const b = e.target.closest('button[data-a]');

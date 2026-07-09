@@ -204,18 +204,26 @@ module.exports = async (req, res) => {
       const search = q
         ? `&or=(email.ilike.*${encodeURIComponent(q)}*,key.ilike.*${encodeURIComponent(q)}*,payment_ref.ilike.*${encodeURIComponent(q)}*)`
         : "";
-      const { body: rows } = await pg(
-        `/licenses?select=key,status,sold,email,payment_ref,device_id,plan,expires_at,activated_at,created_at${cond}${search}&order=created_at.desc&limit=100`,
+      const pageSize = 50;
+      const page = Math.max(parseInt(body.page, 10) || 0, 0);
+      const { body: rows, headers } = await pg(
+        `/licenses?select=key,status,sold,email,payment_ref,device_id,plan,expires_at,activated_at,created_at${cond}${search}&order=created_at.desc&limit=${pageSize}&offset=${page * pageSize}`,
+        { headers: { Prefer: "count=exact" } },
       );
-      res.status(200).json({ ok: true, rows: rows || [] });
+      const total = parseInt((headers.get("content-range") || "/0").split("/")[1], 10) || 0;
+      res.status(200).json({ ok: true, rows: rows || [], total, page, pageSize });
       return;
     }
 
     if (action === "payments") {
-      const { body: rows } = await pg(
-        "/license_payments?select=payment_ref,key,email,days,processed_at&order=processed_at.desc&limit=100",
+      const pageSize = 50;
+      const page = Math.max(parseInt(body.page, 10) || 0, 0);
+      const { body: rows, headers } = await pg(
+        `/license_payments?select=payment_ref,key,email,days,processed_at&order=processed_at.desc&limit=${pageSize}&offset=${page * pageSize}`,
+        { headers: { Prefer: "count=exact" } },
       );
-      res.status(200).json({ ok: true, rows: rows || [] });
+      const total = parseInt((headers.get("content-range") || "/0").split("/")[1], 10) || 0;
+      res.status(200).json({ ok: true, rows: rows || [], total, page, pageSize });
       return;
     }
 
