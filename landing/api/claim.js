@@ -209,16 +209,24 @@ const PAYMENT_ALERT_TO = [...new Set(
 )];
 
 async function sendEmail(to, subject, html) {
-  const from =
-    process.env.MAIL_FROM || "Human Typer <keys@updates.rufaiahmed.com>";
-  const r = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ from, to, subject, html }),
-  });
+  const primary =
+    process.env.MAIL_FROM || "Human Typer <keys@updates.humantyper.online>";
+  const legacy = "Human Typer <keys@updates.rufaiahmed.com>";
+  const post = (from) =>
+    fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ from, to, subject, html }),
+    });
+  let r = await post(primary);
+  if (!r.ok && primary !== legacy) {
+    // New sender domain not verified in Resend yet? Key delivery must not
+    // break: fall back to the old verified sender.
+    r = await post(legacy);
+  }
   if (!r.ok) throw new Error(`resend failed: ${r.status} ${await r.text()}`);
   return r.json();
 }
