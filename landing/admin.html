@@ -229,7 +229,10 @@
                 const acts = [];
                 if (r.email) acts.push('<button data-a="resend" data-k="' + esc(r.key) + '">resend</button>');
                 if (r.device_id) acts.push('<button data-a="unbind" data-k="' + esc(r.key) + '">unbind</button>');
-                if (r.plan === 'monthly' && r.sold) acts.push('<button data-a="extend" data-k="' + esc(r.key) + '">+30d</button>');
+                if ((r.plan === 'monthly' || r.plan === 'ai_monthly') && r.sold) acts.push('<button data-a="extend" data-k="' + esc(r.key) + '">+30d</button>');
+                // AI override: auto (follow plan) -> on -> off -> auto. Label shows current.
+                const aiState = r.ai_enabled === true ? 'on' : r.ai_enabled === false ? 'off' : 'auto';
+                acts.push('<button data-a="ai" data-k="' + esc(r.key) + '" data-ai="' + aiState + '">AI: ' + aiState + '</button>');
                 acts.push(r.status === 'revoked'
                     ? '<button data-a="restore" data-k="' + esc(r.key) + '">restore</button>'
                     : '<button data-a="revoke" data-k="' + esc(r.key) + '">revoke</button>');
@@ -285,8 +288,16 @@
             try {
                 const payload = { action: a, key: k };
                 if (a === 'extend') payload.days = 30;
+                if (a === 'ai') {
+                    // Cycle auto -> on -> off -> auto.
+                    const cur = b.getAttribute('data-ai') || 'auto';
+                    payload.action = 'setai';
+                    payload.ai = cur === 'auto' ? 'on' : cur === 'on' ? 'off' : 'auto';
+                }
                 const d = await api(payload);
-                msg(a === 'resend' ? 'Emailed ' + d.sent_to : a + ' done');
+                msg(a === 'resend' ? 'Emailed ' + d.sent_to
+                    : a === 'ai' ? ('AI set to ' + payload.ai + ' (takes effect on the app’s next launch)')
+                    : a + ' done');
                 loadLicenses().catch(oops);
                 refreshStats().catch(oops);
             } catch (err) { oops(err); }

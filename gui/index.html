@@ -207,14 +207,36 @@
                 <section class="panel input-panel">
                     <div class="panel-header">
                         <h2 class="eyebrow"><span class="prompt">&#9656;</span> TEXT TO TYPE</h2>
-                        <button id="btn-clipboard" class="btn btn-secondary">
-                            <span class="icon" aria-hidden="true">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-                                    <rect width="8" height="4" x="8" y="2" rx="1" ry="1"/>
-                                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
-                                </svg>
-                            </span> Paste Clipboard
-                        </button>
+                        <div class="panel-header-actions">
+                            <div id="ai-controls" class="ai-controls hidden">
+                                <select id="ai-style" class="ai-style" title="Rephrase tone">
+                                    <option value="natural">Natural</option>
+                                    <option value="formal">Formal</option>
+                                    <option value="casual">Casual</option>
+                                    <option value="simpler">Simpler</option>
+                                    <option value="shorter">Shorter</option>
+                                    <option value="confident">Confident</option>
+                                </select>
+                                <button id="btn-rephrase" class="btn btn-secondary" title="Rewrite the text to read human, then you type it">
+                                    <span class="icon" aria-hidden="true">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3m0 12v3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1M3 12h3m12 0h3M5.6 18.4l2.1-2.1m8.6-8.6 2.1-2.1"/></svg>
+                                    </span> Rephrase
+                                </button>
+                                <button id="btn-ai-settings" class="btn btn-icon" title="AI settings" aria-label="AI settings">
+                                    <span class="icon" aria-hidden="true">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                                    </span>
+                                </button>
+                            </div>
+                            <button id="btn-clipboard" class="btn btn-secondary">
+                                <span class="icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                                        <rect width="8" height="4" x="8" y="2" rx="1" ry="1"/>
+                                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                                    </svg>
+                                </span> Paste Clipboard
+                            </button>
+                        </div>
                     </div>
 
                     <div class="textarea-container">
@@ -232,6 +254,49 @@
                             <span id="stealth-wpm" class="stealth-wpm"></span>
                         </div>
                         <p id="stealth-tip" class="stealth-tip"></p>
+                    </div>
+
+                    <!-- AI rephrase preview: review before it replaces your text -->
+                    <div id="ai-preview" class="ai-preview hidden">
+                        <div class="ai-preview-head"><span class="prompt">&#9656;</span> Rephrased draft</div>
+                        <div id="ai-preview-text" class="ai-preview-text"></div>
+                        <div class="ai-preview-actions">
+                            <button id="ai-accept" class="btn btn-primary">Use this</button>
+                            <button id="ai-discard" class="btn btn-secondary">Discard</button>
+                        </div>
+                    </div>
+
+                    <!-- AI settings -->
+                    <div id="ai-panel" class="ai-panel hidden">
+                        <div class="ai-panel-head">
+                            <span class="prompt">&#9656;</span> AI SETTINGS
+                            <button id="ai-panel-close" class="btn btn-icon" aria-label="Close">&times;</button>
+                        </div>
+                        <p class="ai-field-label">Which AI powers Rephrase</p>
+                        <label class="ai-radio"><input type="radio" name="ai-provider" value="gemini_free"> <span>Free Gemini (included, no setup)</span></label>
+                        <label class="ai-radio"><input type="radio" name="ai-provider" value="claude"> <span>My Claude key</span></label>
+                        <label class="ai-radio"><input type="radio" name="ai-provider" value="gemini_own"> <span>My Gemini key</span></label>
+
+                        <div id="ai-claude-fields" class="ai-key-fields hidden">
+                            <input id="ai-claude-key" type="password" class="ai-input" placeholder="Claude API key (sk-ant-...) — stored only on this Mac" autocomplete="off">
+                            <span id="ai-claude-saved" class="ai-saved-note hidden">A Claude key is saved. <button id="ai-claude-clear" class="ai-linkbtn" type="button">Remove</button></span>
+                        </div>
+                        <div id="ai-gemini-fields" class="ai-key-fields hidden">
+                            <input id="ai-gemini-key" type="password" class="ai-input" placeholder="Gemini API key (AIza...) — stored only on this Mac" autocomplete="off">
+                            <span id="ai-gemini-saved" class="ai-saved-note hidden">A Gemini key is saved. <button id="ai-gemini-clear" class="ai-linkbtn" type="button">Remove</button></span>
+                        </div>
+
+                        <details class="ai-advanced">
+                            <summary>System prompt (advanced)</summary>
+                            <p class="ai-hint">Edits apply when you use your own Claude or Gemini key. The free Gemini option always uses the built-in prompt.</p>
+                            <textarea id="ai-prompt" class="ai-prompt" rows="6"></textarea>
+                            <button id="ai-prompt-reset" class="ai-linkbtn" type="button">Reset to default</button>
+                        </details>
+
+                        <div class="ai-panel-foot">
+                            <button id="ai-save" class="btn btn-primary">Save</button>
+                            <span id="ai-save-msg" class="ai-save-msg"></span>
+                        </div>
                     </div>
 
                     <div class="action-bar">

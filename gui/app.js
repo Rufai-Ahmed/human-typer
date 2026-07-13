@@ -149,6 +149,7 @@ document.addEventListener('DOMContentLoaded', () => {
         accessGate.classList.add('hidden');
         if (accessPoll) { clearInterval(accessPoll); accessPoll = null; }
         appRoot.classList.remove('hidden');
+        initAI();
         // Adopt a run already in flight (browser mode survives a page reload) so it
         // stays visible and stoppable instead of typing on unwatched.
         fetch('/api/status').then((r) => r.json()).then((d) => {
@@ -399,6 +400,136 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('Could not read the clipboard: ' + ((err && err.message) || err));
         }
     });
+
+    // ============================ AI Rephrase ============================
+    const aiControls = document.getElementById('ai-controls');
+    const aiPanel = document.getElementById('ai-panel');
+    const aiPreview = document.getElementById('ai-preview');
+    const aiPreviewText = document.getElementById('ai-preview-text');
+    const btnRephrase = document.getElementById('btn-rephrase');
+    const aiStyle = document.getElementById('ai-style');
+    let aiLoaded = false;
+    let aiDefaultPrompt = '';
+
+    async function initAI() {
+        if (aiLoaded) return;
+        try {
+            const r = await fetch('/api/ai/settings');
+            const d = await r.json();
+            if (!d || !d.ai) { aiControls.classList.add('hidden'); return; }
+            aiControls.classList.remove('hidden');
+            aiDefaultPrompt = d.default_prompt || '';
+            hydrateAISettings(d);
+            aiLoaded = true;
+        } catch (e) { /* AI stays hidden; the rest of the app is unaffected */ }
+    }
+
+    function hydrateAISettings(d) {
+        aiStyle.value = d.style || 'natural';
+        const prov = d.provider || 'gemini_free';
+        const radio = document.querySelector('input[name="ai-provider"][value="' + prov + '"]');
+        if (radio) radio.checked = true;
+        document.getElementById('ai-prompt').value = d.system_prompt || '';
+        document.getElementById('ai-claude-key').value = '';
+        document.getElementById('ai-gemini-key').value = '';
+        document.getElementById('ai-claude-saved').classList.toggle('hidden', !d.has_claude_key);
+        document.getElementById('ai-gemini-saved').classList.toggle('hidden', !d.has_gemini_key);
+        syncProviderFields();
+    }
+
+    function syncProviderFields() {
+        const prov = (document.querySelector('input[name="ai-provider"]:checked') || {}).value || 'gemini_free';
+        document.getElementById('ai-claude-fields').classList.toggle('hidden', prov !== 'claude');
+        document.getElementById('ai-gemini-fields').classList.toggle('hidden', prov !== 'gemini_own');
+    }
+
+    btnRephrase.addEventListener('click', async () => {
+        const text = (textInput.value || '').trim();
+        if (!text) { alert('Type or paste some text first, then Rephrase.'); return; }
+        btnRephrase.classList.add('busy');
+        const original = btnRephrase.innerHTML;
+        btnRephrase.textContent = 'Rephrasing…';
+        try {
+            const r = await fetch('/api/ai/rephrase', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: textInput.value, style: aiStyle.value }),
+            });
+            const d = await r.json();
+            if (!d || !d.ok) throw new Error((d && d.error) || 'Rephrase failed.');
+            aiPreviewText.textContent = d.text;
+            aiPreview.dataset.text = d.text;
+            aiPreview.classList.remove('hidden');
+            aiPreview.scrollIntoView({ block: 'nearest' });
+        } catch (err) {
+            alert('Could not rephrase: ' + ((err && err.message) || err));
+        } finally {
+            btnRephrase.classList.remove('busy');
+            btnRephrase.innerHTML = original;
+        }
+    });
+
+    document.getElementById('ai-accept').addEventListener('click', () => {
+        textInput.value = aiPreview.dataset.text || '';
+        aiPreview.classList.add('hidden');
+        updateCounters();
+        updateStealth();
+    });
+    document.getElementById('ai-discard').addEventListener('click', () => {
+        aiPreview.classList.add('hidden');
+    });
+
+    // Settings panel
+    document.getElementById('btn-ai-settings').addEventListener('click', () => {
+        aiPanel.classList.toggle('hidden');
+    });
+    document.getElementById('ai-panel-close').addEventListener('click', () => {
+        aiPanel.classList.add('hidden');
+    });
+    document.querySelectorAll('input[name="ai-provider"]').forEach((el) =>
+        el.addEventListener('change', syncProviderFields));
+    document.getElementById('ai-prompt-reset').addEventListener('click', () => {
+        document.getElementById('ai-prompt').value = aiDefaultPrompt;
+    });
+
+    async function saveAISetting(patch, note) {
+        const msg = document.getElementById('ai-save-msg');
+        try {
+            const r = await fetch('/api/ai/settings', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(patch),
+            });
+            const d = await r.json();
+            if (!d || !d.ok) throw new Error((d && d.error) || 'Save failed');
+            msg.textContent = note || 'Saved.';
+            msg.classList.remove('err');
+            // Re-hydrate so the "key saved" note reflects reality.
+            const s = await (await fetch('/api/ai/settings')).json();
+            hydrateAISettings(s);
+        } catch (err) {
+            msg.textContent = (err && err.message) || 'Save failed';
+            msg.classList.add('err');
+        }
+        setTimeout(() => { msg.textContent = ''; }, 3000);
+    }
+
+    document.getElementById('ai-save').addEventListener('click', () => {
+        const prov = (document.querySelector('input[name="ai-provider"]:checked') || {}).value || 'gemini_free';
+        const patch = {
+            provider: prov,
+            style: aiStyle.value,
+            system_prompt: document.getElementById('ai-prompt').value,
+        };
+        const ck = document.getElementById('ai-claude-key').value.trim();
+        const gk = document.getElementById('ai-gemini-key').value.trim();
+        if (ck) patch.claude_key = ck;
+        if (gk) patch.gemini_key = gk;
+        saveAISetting(patch);
+    });
+    document.getElementById('ai-claude-clear').addEventListener('click', () =>
+        saveAISetting({ clear_claude_key: true }, 'Claude key removed.'));
+    document.getElementById('ai-gemini-clear').addEventListener('click', () =>
+        saveAISetting({ clear_gemini_key: true }, 'Gemini key removed.'));
 
     // ============================ Start Typing ============================
     let runResolve = null;

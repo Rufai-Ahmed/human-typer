@@ -211,7 +211,7 @@ module.exports = async (req, res) => {
       const pageSize = 50;
       const page = Math.max(parseInt(body.page, 10) || 0, 0);
       const { body: rows, headers } = await pg(
-        `/licenses?select=key,status,sold,email,payment_ref,device_id,plan,expires_at,activated_at,created_at${cond}${search}&order=created_at.desc&limit=${pageSize}&offset=${page * pageSize}`,
+        `/licenses?select=key,status,sold,email,payment_ref,device_id,plan,expires_at,ai_enabled,activated_at,created_at${cond}${search}&order=created_at.desc&limit=${pageSize}&offset=${page * pageSize}`,
         { headers: { Prefer: "count=exact" } },
       );
       const total = parseInt((headers.get("content-range") || "/0").split("/")[1], 10) || 0;
@@ -263,7 +263,7 @@ module.exports = async (req, res) => {
       const row = rows && rows[0];
       if (!row) throw oops("key not found");
       // Never silently mutate a lifetime license into an expiring one.
-      if (!(row.sold && row.plan === "monthly"))
+      if (!(row.sold && (row.plan === "monthly" || row.plan === "ai_monthly")))
         throw oops("extend only applies to sold monthly keys");
       const base = row.expires_at && new Date(row.expires_at) > new Date()
         ? new Date(row.expires_at)
@@ -299,6 +299,21 @@ module.exports = async (req, res) => {
         </div>`,
       );
       res.status(200).json({ ok: true, sent_to: row.email });
+      return;
+    }
+
+    if (action === "setai") {
+      if (!key) throw oops("key required");
+      // 'on' = force AI, 'off' = force no AI, 'auto' = follow the plan (null).
+      const v = String(body.ai || "auto");
+      const val = v === "on" ? true : v === "off" ? false : null;
+      const { body: rows } = await pg(`/licenses?key=eq.${encodeURIComponent(key)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ ai_enabled: val }),
+      });
+      if (!rows || !rows.length) throw oops("key not found");
+      res.status(200).json({ ok: true, row: rows[0] });
       return;
     }
 
