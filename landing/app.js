@@ -251,6 +251,28 @@ document.getElementById('year').textContent = new Date().getFullYear();
         });
     })();
 
+    // ---- AI plan cards (monthly + lifetime; single email + buy, no seats) ----
+    [
+        { btn: 'btn-buy-ai-monthly', email: 'buyer-email-ai-monthly', msg: 'buy-msg-ai-monthly', plan: 'ai_monthly' },
+        { btn: 'btn-buy-ai-lifetime', email: 'buyer-email-ai-lifetime', msg: 'buy-msg-ai-lifetime', plan: 'ai_lifetime' },
+    ].forEach((c) => {
+        const btn = document.getElementById(c.btn);
+        const emailInput = document.getElementById(c.email);
+        if (!btn) return;
+        const msgEl = document.getElementById(c.msg);
+        const showMsg = makeShowMsg(msgEl);
+        btn.addEventListener('click', () => {
+            track('buy-clicked', { plan: c.plan });
+            const email = (emailInput.value || '').trim();
+            if (!validEmail(email)) {
+                showMsg('Please enter a valid email. That is where your key is sent.', true);
+                emailInput.focus();
+                return;
+            }
+            runCheckout({ email, plan: c.plan, seats: 1, showMsg, msgEl });
+        });
+    });
+
     // ---- Return from the hosted Flutterwave page (?status=...&tx_ref=...) ----
     (() => {
         const params = new URLSearchParams(window.location.search);

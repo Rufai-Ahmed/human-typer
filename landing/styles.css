@@ -599,7 +599,8 @@ kbd{
   border-radius:var(--r-card);
   padding:var(--s-8);
 }
-/* Two plan cards side by side (Lifetime + Monthly); stack on small screens. */
+/* Four plan cards in a 2x2 (AI Monthly, AI Lifetime, Lifetime, Monthly);
+   stack to a single column on small screens, AI Monthly first. */
 .price-grid{
   display:grid;
   grid-template-columns:repeat(2, minmax(0, 1fr));
@@ -608,6 +609,8 @@ kbd{
   margin:var(--s-10) auto 0;
   align-items:stretch;
 }
+/* Flagship AI Lifetime card: subtle accent ring, no loud styling. */
+.price-card-featured{ border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
 .price-grid .price-card{
   max-width:none;
   margin-top:0;

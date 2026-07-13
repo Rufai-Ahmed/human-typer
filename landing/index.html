@@ -47,6 +47,24 @@
       "offers": [
         {
           "@type": "Offer",
+          "name": "AI Pro Monthly (30 days)",
+          "description": "30 days of full access plus the AI rephraser, on one device. Use the included free Gemini or your own Claude/Gemini key. No auto-charge; renew by paying again.",
+          "price": "5000",
+          "priceCurrency": "NGN",
+          "url": "https://www.humantyper.online/#pricing",
+          "availability": "https://schema.org/InStock"
+        },
+        {
+          "@type": "Offer",
+          "name": "AI Pro Lifetime",
+          "description": "One-time payment. Lifetime access with the AI rephraser included forever, on macOS and Windows. One device per key. No subscription.",
+          "price": "15000",
+          "priceCurrency": "NGN",
+          "url": "https://www.humantyper.online/#pricing",
+          "availability": "https://schema.org/InStock"
+        },
+        {
+          "@type": "Offer",
           "name": "Lifetime license",
           "description": "One-time payment. Lifetime access on macOS and Windows, all features and future updates, one device per key. No subscription, no renewals.",
           "price": "10000",
@@ -284,10 +302,47 @@
             <div class="section-head">
                 <p class="eyebrow"><span class="tic">▸</span> Pricing</p>
                 <h2 class="section-title">Simple pricing.</h2>
-                <p class="section-sub">Pay once and own it for life, or go month to month for ₦2,000. No auto-charges either way.</p>
+                <p class="section-sub">Pick your plan. Add the AI rephraser (₦5,000/month or ₦15,000 for life), or take the app on its own from ₦2,000. No auto-charges, ever.</p>
             </div>
 
             <div class="price-grid">
+                <!-- AI Monthly card -->
+                <div class="price-card">
+                    <div class="price-badge">AI Pro · Monthly</div>
+                    <div class="price-amount">₦5,000<span class="price-once"> / month</span></div>
+                    <p class="price-compare">Everything in Monthly, plus the AI rephraser: rewrite pasted text to read human, then type it out for real.</p>
+                    <ul class="price-list">
+                        <li>Everything in the monthly plan</li>
+                        <li><strong>AI rephrase</strong> built into the app</li>
+                        <li>Use the free Gemini, or your own Claude/Gemini key</li>
+                        <li>30 days, renew anytime, no auto-charge</li>
+                    </ul>
+                    <div class="price-actions">
+                        <input id="buyer-email-ai-monthly" type="email" class="price-email" placeholder="your@email.com (where we send your key)" autocomplete="email" inputmode="email">
+                        <button id="btn-buy-ai-monthly" class="btn btn-primary btn-lg price-buy">Get AI for ₦5,000/month</button>
+                        <p id="buy-msg-ai-monthly" class="buy-msg hidden"></p>
+                    </div>
+                </div>
+
+                <!-- AI Lifetime card (flagship) -->
+                <div class="price-card price-card-featured">
+                    <div class="price-badge">AI Pro · Lifetime</div>
+                    <div class="price-amount">₦15,000<span class="price-once"> once</span></div>
+                    <p class="price-compare">The AI rephraser, owned for life. One payment, no renewals, AI forever.</p>
+                    <ul class="price-list">
+                        <li>Lifetime access, <strong>AI included forever</strong></li>
+                        <li>AI rephrase built into the app</li>
+                        <li>Use the free Gemini, or your own Claude/Gemini key</li>
+                        <li>Every feature, plus future updates</li>
+                        <li>One device per key</li>
+                    </ul>
+                    <div class="price-actions">
+                        <input id="buyer-email-ai-lifetime" type="email" class="price-email" placeholder="your@email.com (where we send your key)" autocomplete="email" inputmode="email">
+                        <button id="btn-buy-ai-lifetime" class="btn btn-primary btn-lg price-buy">Buy AI Lifetime for ₦15,000</button>
+                        <p id="buy-msg-ai-lifetime" class="buy-msg hidden"></p>
+                    </div>
+                </div>
+
                 <!-- Lifetime card -->
                 <div class="price-card">
                     <div class="price-badge">Lifetime license</div>
