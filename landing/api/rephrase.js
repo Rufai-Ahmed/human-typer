@@ -40,8 +40,17 @@ const styleSuffix = (s) => {
   return v === "confident" ? "\n\nStyle: more confident" : `\n\nStyle: ${v}`;
 };
 
-async function gemini(text) {
-  const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+// Try each model until one has free-tier quota / exists. Order: env override,
+// then the models with real free-tier RPD on a typical project (3.1 Flash Lite
+// = 500/day, then older Flash-Lite fallbacks). A model that is missing (404) or
+// out of quota (429) advances to the next; a genuine content error surfaces.
+function geminiModels() {
+  const primary = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
+  const chain = [primary, "gemini-2.5-flash-lite", "gemini-2.0-flash-lite", "gemini-2.5-flash"];
+  return [...new Set(chain)];
+}
+
+async function geminiCall(model, text) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
   const r = await fetch(url, {
     method: "POST",
@@ -53,17 +62,26 @@ async function gemini(text) {
     }),
   });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    const msg = (j && j.error && j.error.message) || `Gemini HTTP ${r.status}`;
-    throw new Error(msg);
-  }
+  const err = (j && j.error && j.error.message) || `Gemini HTTP ${r.status}`;
+  if (!r.ok) return { retryable: r.status === 404 || r.status === 429 || r.status === 403, err };
   const cand = j.candidates && j.candidates[0];
-  const parts = cand && cand.content && cand.content.parts;
-  const out = (parts || []).map((p) => p && p.text).filter(Boolean).join("");
-  if (!out && cand && cand.finishReason && cand.finishReason !== "STOP") {
-    throw new Error(`Gemini stopped: ${cand.finishReason}`);
+  if (cand && cand.finishReason === "MAX_TOKENS") {
+    return { fatal: "The rephrase was cut off because the text is long. Try a shorter passage." };
   }
-  return out;
+  const parts = cand && cand.content && cand.content.parts;
+  return { out: (parts || []).map((p) => p && p.text).filter(Boolean).join("") };
+}
+
+async function gemini(text) {
+  let lastErr = "Gemini is unavailable right now.";
+  for (const model of geminiModels()) {
+    const r = await geminiCall(model, text);
+    if (r.fatal) throw new Error(r.fatal);
+    if (r.out !== undefined) return r.out;
+    lastErr = r.err;
+    if (!r.retryable) throw new Error(r.err);   // real error, not a quota/model miss
+  }
+  throw new Error(lastErr + " (no free model had quota; enable billing on the Gemini key to lift this).");
 }
 
 module.exports = async (req, res) => {
