@@ -1,25 +1,28 @@
 -- Human Typer licensing — run this once in the Supabase SQL editor.
+-- AFTER this, also run supabase_ai_migration.sql to add the AI plans/override.
 --
--- All access is via the two functions below, called by the Vercel API using the
+-- All access is via the functions below, called by the Vercel API using the
 -- SERVICE_ROLE key (which bypasses RLS). The table itself is locked down (RLS on,
 -- no policies), so the public/publishable key can neither read nor write it.
 
 create table if not exists public.licenses (
   key          text primary key,
   status       text not null default 'active',   -- 'active' | 'revoked'
-  sold         boolean not null default false,    -- claimed via a Paystack payment
+  sold         boolean not null default false,    -- claimed via a payment
   email        text,
   payment_ref  text,
   device_id    text,                              -- bound machine (null until activated)
-  plan         text not null default 'lifetime', -- 'lifetime' | 'monthly'
+  plan         text not null default 'lifetime', -- monthly | ai_monthly | lifetime | ai_lifetime
   expires_at   timestamptz,                       -- null = never expires (lifetime); set for monthly
+  ai_enabled   boolean,                           -- override: null=plan default, true/false=forced
   activated_at timestamptz,
   created_at   timestamptz not null default now()
 );
 
--- For deployments created before the monthly plan existed: add the new columns.
+-- For deployments created before these columns existed: add them.
 alter table public.licenses add column if not exists plan       text not null default 'lifetime';
 alter table public.licenses add column if not exists expires_at timestamptz;
+alter table public.licenses add column if not exists ai_enabled boolean;
 
 -- Ledger of every monthly payment, so renewals are idempotent per Paystack reference
 -- (the browser callback + webhook can both fire for one payment) and auditable.
