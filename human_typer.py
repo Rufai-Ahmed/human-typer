@@ -836,7 +836,8 @@ def _write_ai_settings(d: dict) -> None:
 
 
 def _http_json(url, payload, headers=None, timeout=45.0):
-    """POST JSON, return (parsed_body, status). Never raises on HTTP errors."""
+    """POST JSON, return (parsed_body, status). Never raises: network/parse
+    failures come back as status 0 with a readable body['error']."""
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url, data=data, method="POST",
@@ -852,6 +853,16 @@ def _http_json(url, payload, headers=None, timeout=45.0):
         except Exception:
             body = {"error": f"HTTP {e.code}"}
         return body, e.code
+    except Exception:
+        return {"error": "Could not reach the AI service. Check your connection and try again."}, 0
+
+
+def _provider_error(body, status, label):
+    """Pull a readable message from a provider error body (dict) or our sentinel (str)."""
+    msg = body.get("error") if isinstance(body, dict) else None
+    if isinstance(msg, dict):
+        msg = msg.get("message")
+    return str(msg) if msg else f"{label} error ({status})."
 
 
 def _rephrase_via_proxy(text: str, style) -> str:
@@ -872,30 +883,31 @@ def _rephrase_gemini(text: str, prompt: str, key: str) -> str:
     payload = {
         "systemInstruction": {"parts": [{"text": prompt}]},
         "contents": [{"role": "user", "parts": [{"text": text}]}],
-        "generationConfig": {"temperature": 0.7, "topP": 0.95, "maxOutputTokens": 2048},
+        "generationConfig": {"temperature": 0.7, "topP": 0.95, "maxOutputTokens": 8192},
     }
     body, status = _http_json(url, payload)
     if status != 200:
-        err = body.get("error")
-        raise RuntimeError((err.get("message") if isinstance(err, dict) else None)
-                           or f"Gemini error ({status}).")
+        raise RuntimeError(_provider_error(body, status, "Gemini"))
     cand = (body.get("candidates") or [{}])[0]
+    # Truncated mid-sentence would get typed into the user's doc; refuse it.
+    if cand.get("finishReason") == "MAX_TOKENS":
+        raise RuntimeError("The rephrase was cut off because the text is long. Try a shorter passage.")
     parts = ((cand.get("content") or {}).get("parts")) or []
     return "".join(p.get("text", "") for p in parts)
 
 
 def _rephrase_claude(text: str, prompt: str, key: str) -> str:
     model = load_ai_settings().get("claude_model") or "claude-haiku-4-5-20251001"
-    payload = {"model": model, "max_tokens": 2048, "system": prompt,
+    payload = {"model": model, "max_tokens": 8192, "system": prompt,
                "messages": [{"role": "user", "content": text}]}
     body, status = _http_json(
         "https://api.anthropic.com/v1/messages", payload,
         headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
     )
     if status != 200:
-        err = body.get("error")
-        raise RuntimeError((err.get("message") if isinstance(err, dict) else None)
-                           or f"Claude error ({status}).")
+        raise RuntimeError(_provider_error(body, status, "Claude"))
+    if body.get("stop_reason") == "max_tokens":
+        raise RuntimeError("The rephrase was cut off because the text is long. Try a shorter passage.")
     parts = body.get("content") or []
     return "".join(b.get("text", "") for b in parts if b.get("type") == "text")
 
@@ -943,12 +955,17 @@ def revalidate_online() -> None:
         return  # offline
     if res.get("ok"):
         changed = False
-        # Sync AI entitlement too, so the owner toggling it in the admin (or a
-        # renewal changing the plan) takes effect on the next launch.
-        for f in ("plan", "expires_at", "ai"):
-            new = bool(res.get(f)) if f == "ai" else res.get(f)
-            if new != data.get(f):
-                data[f] = new
+        for f in ("plan", "expires_at"):
+            if res.get(f) != data.get(f):
+                data[f] = res.get(f)
+                changed = True
+        # Sync AI entitlement so an admin toggle / renewal takes effect next launch,
+        # but ONLY when the server actually sent the field — never downgrade a paying
+        # AI user to no-AI just because an old/partial response omitted it.
+        if "ai" in res:
+            v = bool(res.get("ai"))
+            if v != data.get("ai"):
+                data["ai"] = v
                 changed = True
         if changed:
             _write_activation(data)

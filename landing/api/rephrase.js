@@ -49,7 +49,7 @@ async function gemini(text) {
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
       contents: [{ role: "user", parts: [{ text }] }],
-      generationConfig: { temperature: 0.7, topP: 0.95, maxOutputTokens: 2048 },
+      generationConfig: { temperature: 0.7, topP: 0.95, maxOutputTokens: 8192 },
     }),
   });
   const j = await r.json().catch(() => ({}));
