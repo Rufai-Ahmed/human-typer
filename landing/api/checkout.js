@@ -61,6 +61,18 @@ module.exports = async (req, res) => {
   const amount =
     plan === "lifetime" ? PER_SEAT_NAIRA[seats] * seats : PLAN_NAIRA[plan];
 
+  // Refuse to create a payment on a broken price config (mirrors claim.js grading
+  // order) rather than charge a wrong amount.
+  if (
+    !(amount > 0) ||
+    !(PLAN_NAIRA.monthly < PLAN_NAIRA.ai_monthly &&
+      PLAN_NAIRA.ai_monthly < PER_SEAT_NAIRA[1] &&
+      PER_SEAT_NAIRA[1] < PLAN_NAIRA.ai_lifetime)
+  ) {
+    res.status(503).json({ ok: false, error: "Payments are temporarily unavailable." });
+    return;
+  }
+
   // ^[a-zA-Z0-9-]+$, 6-42 chars, unique across all transactions.
   const reference = `HT-${Date.now().toString(36)}-${Math.random()
     .toString(36)

@@ -370,16 +370,6 @@ module.exports = async (req, res) => {
   const aiMonthlyKobo = parseInt(process.env.AI_MONTHLY_KOBO || "500000", 10); // ₦5,000 = 30 days + AI
   const aiLifetimeKobo = parseInt(process.env.AI_LIFETIME_KOBO || "1500000", 10); // ₦15,000 lifetime + AI
   const monthlyDays = parseInt(process.env.MONTHLY_DAYS || "30", 10);
-  // Fail loudly on a price misconfig. The plan is graded by amount floors, so the
-  // four price points MUST stay strictly ordered or a payment would fulfill as the
-  // wrong (cheaper) plan and lose revenue.
-  if (!(monthlyKobo < aiMonthlyKobo && aiMonthlyKobo < priceKobo && priceKobo < aiLifetimeKobo)) {
-    res.status(500).json({
-      ok: false,
-      error: "Server misconfigured: prices must be MONTHLY < AI_MONTHLY < PRICE(lifetime) < AI_LIFETIME",
-    });
-    return;
-  }
   const downloadUrl =
     process.env.DOWNLOAD_URL || "https://humantyper.rufaiahmed.com#download";
 
@@ -397,6 +387,19 @@ module.exports = async (req, res) => {
     { plan: "ai_monthly", seats: 1, kobo: aiMonthlyKobo }, // ₦5,000 + AI
     { plan: "monthly", seats: 1, kobo: monthlyKobo }, // ₦2,000
   ].sort((a, b) => b.kobo - a.kobo);
+  // Floor grading is only correct if every tier floor (the four env prices AND
+  // the hardcoded team-pack totals) is strictly distinct and descending. A bad
+  // env value could otherwise collide with a pack total and mis-grade a payment
+  // to the wrong plan. Refuse to fulfill on any misconfig rather than risk it.
+  for (let i = 1; i < TIERS.length; i++) {
+    if (TIERS[i].kobo >= TIERS[i - 1].kobo) {
+      res.status(500).json({
+        ok: false,
+        error: "Server misconfigured: plan/pack prices must be strictly distinct and ordered",
+      });
+      return;
+    }
+  }
   const gradeFor = (amountKobo) => {
     for (const t of TIERS) if (amountKobo >= t.kobo) return t;
     return null;
