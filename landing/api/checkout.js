@@ -40,24 +40,26 @@ module.exports = async (req, res) => {
     res.status(400).json({ ok: false, error: "A valid email is required" });
     return;
   }
-  const plan = body.plan === "monthly" ? "monthly" : "lifetime";
-  const seats = plan === "monthly" ? 1 : Number(body.seats) || 1;
+  const PLANS = new Set(["monthly", "ai_monthly", "lifetime", "ai_lifetime"]);
+  const plan = PLANS.has(body.plan) ? body.plan : "lifetime";
+  // Only the no-AI lifetime plan has team/volume seats; the rest are 1 device.
+  const seats = plan === "lifetime" ? Number(body.seats) || 1 : 1;
   if (!VALID_SEATS.has(seats)) {
     res.status(400).json({ ok: false, error: "Invalid seat count" });
     return;
   }
 
-  // Same price source claim.js uses (kobo envs), expressed in naira for v4.
-  const priceKobo = parseInt(process.env.PRICE_KOBO || "1000000", 10);
-  const monthlyKobo = parseInt(process.env.MONTHLY_KOBO || "200000", 10);
-  const PER_SEAT_NAIRA = {
-    1: priceKobo / 100, // ₦10,000 single
-    5: 8000,
-    10: 7000,
-    25: 6000,
+  // Prices in naira (the v3 checkout unit). Team seats apply to "lifetime" only.
+  // Keep in sync with the tier table in api/claim.js.
+  const priceNaira = parseInt(process.env.PRICE_KOBO || "1000000", 10) / 100;
+  const PER_SEAT_NAIRA = { 1: priceNaira, 5: 8000, 10: 7000, 25: 6000 };
+  const PLAN_NAIRA = {
+    monthly: parseInt(process.env.MONTHLY_KOBO || "200000", 10) / 100, // ₦2,000
+    ai_monthly: parseInt(process.env.AI_MONTHLY_KOBO || "500000", 10) / 100, // ₦5,000
+    ai_lifetime: parseInt(process.env.AI_LIFETIME_KOBO || "1500000", 10) / 100, // ₦15,000
   };
   const amount =
-    plan === "monthly" ? monthlyKobo / 100 : PER_SEAT_NAIRA[seats] * seats;
+    plan === "lifetime" ? PER_SEAT_NAIRA[seats] * seats : PLAN_NAIRA[plan];
 
   // ^[a-zA-Z0-9-]+$, 6-42 chars, unique across all transactions.
   const reference = `HT-${Date.now().toString(36)}-${Math.random()

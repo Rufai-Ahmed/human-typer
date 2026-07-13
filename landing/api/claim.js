@@ -231,7 +231,14 @@ async function sendEmail(to, subject, html) {
   return r.json();
 }
 
-function keysEmailHtml(keys, downloadUrl) {
+const aiNoteHtml = `
+  <p style="background:#eef2ff;border:1px solid #d5ddff;border-radius:10px;padding:12px 14px">
+    <strong>AI rephrasing is included.</strong> In the app, open Settings, turn on AI,
+    and either use the free Gemini option or paste your own Claude/Gemini key. Then paste
+    text, hit Rephrase, and it rewrites it to read human before typing it out.
+  </p>`;
+
+function keysEmailHtml(keys, downloadUrl, hasAI) {
   const many = keys.length > 1;
   const keyBlocks = keys
     .map(
@@ -256,6 +263,7 @@ function keysEmailHtml(keys, downloadUrl) {
       }</p>
       ${keyBlocks}
       ${teamNote}
+      ${hasAI ? aiNoteHtml : ""}
       <ol style="line-height:1.7">
         <li>Download the app: <a href="${downloadUrl}">${downloadUrl}</a></li>
         <li>Open it and paste ${
@@ -284,16 +292,17 @@ function fmtDate(iso) {
   }
 }
 
-function monthlyEmailHtml(key, expiresAt, downloadUrl) {
+function monthlyEmailHtml(key, expiresAt, downloadUrl, hasAI) {
   return `
     <div style="font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:520px;margin:0 auto;color:#111">
-      <h2 style="margin:0 0 8px">Your Human Typer monthly pass</h2>
+      <h2 style="margin:0 0 8px">Your Human Typer ${hasAI ? "AI monthly pass" : "monthly pass"}</h2>
       <p>Thank you! Your pass is active${
         expiresAt ? ` until <strong>${fmtDate(expiresAt)}</strong>` : ""
       }. Your key is below.</p>
       <p style="font-size:20px;font-weight:700;letter-spacing:1px;background:#f4f4f8;
                 border:1px solid #e2e2ea;border-radius:10px;padding:14px 16px;text-align:center;
                 font-family:'JetBrains Mono',monospace;margin:10px 0">${key}</p>
+      ${hasAI ? aiNoteHtml : ""}
       <ol style="line-height:1.7">
         <li>Download the app: <a href="${downloadUrl}">${downloadUrl}</a></li>
         <li>Open it and paste this key on the activation screen (needs internet).</li>
@@ -356,35 +365,41 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const priceKobo = parseInt(process.env.PRICE_KOBO || "1000000", 10);
+  const priceKobo = parseInt(process.env.PRICE_KOBO || "1000000", 10); // ₦10,000 lifetime
   const monthlyKobo = parseInt(process.env.MONTHLY_KOBO || "200000", 10); // ₦2,000 = 30 days
+  const aiMonthlyKobo = parseInt(process.env.AI_MONTHLY_KOBO || "500000", 10); // ₦5,000 = 30 days + AI
+  const aiLifetimeKobo = parseInt(process.env.AI_LIFETIME_KOBO || "1500000", 10); // ₦15,000 lifetime + AI
   const monthlyDays = parseInt(process.env.MONTHLY_DAYS || "30", 10);
-  // Fail loudly on a price misconfig: if the monthly amount were >= the lifetime price,
-  // every lifetime payment would silently fulfill as a cheap monthly key (revenue loss).
-  if (monthlyKobo >= priceKobo) {
+  // Fail loudly on a price misconfig. The plan is graded by amount floors, so the
+  // four price points MUST stay strictly ordered or a payment would fulfill as the
+  // wrong (cheaper) plan and lose revenue.
+  if (!(monthlyKobo < aiMonthlyKobo && aiMonthlyKobo < priceKobo && priceKobo < aiLifetimeKobo)) {
     res.status(500).json({
       ok: false,
-      error: "Server misconfigured: MONTHLY_KOBO must be less than PRICE_KOBO",
+      error: "Server misconfigured: prices must be MONTHLY < AI_MONTHLY < PRICE(lifetime) < AI_LIFETIME",
     });
     return;
   }
   const downloadUrl =
     process.env.DOWNLOAD_URL || "https://humantyper.rufaiahmed.com#download";
 
-  // Volume tiers: total paid (in kobo) -> number of 1-device keys to hand out.
-  // The seat count is derived ONLY from the Paystack-verified amount below, never
-  // from anything the client sent (anti-fraud). A buyer is granted the largest tier
-  // whose total they actually covered, so they can never get more keys than paid for.
-  // Keep this in sync with PER_SEAT_KOBO in app.js.
+  // Plan + seats are derived ONLY from the provider-verified amount (anti-fraud),
+  // never from anything the client sent. The buyer gets the highest tier whose
+  // total they actually covered. Because we grade on min(paid, requested) the
+  // amount is the exact sticker price, so these floors never collide across the
+  // four plans + lifetime team packs. Sorted desc so env overrides can't misorder.
   const TIERS = [
-    { seats: 25, totalKobo: 15000000 }, // ₦6,000/seat
-    { seats: 10, totalKobo: 7000000 }, // ₦7,000/seat
-    { seats: 5, totalKobo: 4000000 }, // ₦8,000/seat
-    { seats: 1, totalKobo: priceKobo }, // ₦10,000/seat (single)
-  ];
-  const seatsForAmount = (amountKobo) => {
-    for (const t of TIERS) if (amountKobo >= t.totalKobo) return t.seats;
-    return 0;
+    { plan: "lifetime", seats: 25, kobo: 15000000 }, // ₦6,000/seat
+    { plan: "lifetime", seats: 10, kobo: 7000000 }, // ₦7,000/seat
+    { plan: "lifetime", seats: 5, kobo: 4000000 }, // ₦8,000/seat
+    { plan: "ai_lifetime", seats: 1, kobo: aiLifetimeKobo }, // ₦15,000 + AI
+    { plan: "lifetime", seats: 1, kobo: priceKobo }, // ₦10,000 single
+    { plan: "ai_monthly", seats: 1, kobo: aiMonthlyKobo }, // ₦5,000 + AI
+    { plan: "monthly", seats: 1, kobo: monthlyKobo }, // ₦2,000
+  ].sort((a, b) => b.kobo - a.kobo);
+  const gradeFor = (amountKobo) => {
+    for (const t of TIERS) if (amountKobo >= t.kobo) return t;
+    return null;
   };
 
   try {
@@ -393,16 +408,18 @@ module.exports = async (req, res) => {
     const verified = await verifyPayment(String(reference));
     const paidKobo = verified.amountKobo;
     const amount = paidKobo;
-    // The PLAN is derived ONLY from provider-verified amounts, never from anything
-    // the client sent: ₦10,000+ is a lifetime order; ₦2,000 up to there is a monthly
-    // pass. Floors, not exact matches, so amount noise cannot orphan a real payment.
-    const isLifetime = verified.ok && amount >= priceKobo;
-    const isMonthly = verified.ok && !isLifetime && amount >= monthlyKobo;
+    const graded = verified.ok ? gradeFor(amount) : null;
+    const plan = graded && graded.plan; // monthly | ai_monthly | lifetime | ai_lifetime
+    const hasAI = plan === "ai_monthly" || plan === "ai_lifetime";
+    const isMonthlyLike = plan === "monthly" || plan === "ai_monthly";
+    // AI plans store their plan via p_plan; monthly/lifetime call the RPCs exactly
+    // as before (no p_plan), so this code is safe even before the SQL migration.
+    const planArg = hasAI ? { p_plan: plan } : {};
     if (!verified.ok) {
       res.status(200).json({ ok: false, status: "not_a_successful_payment" });
       return;
     }
-    if (!isMonthly && !isLifetime) {
+    if (!graded) {
       // Verified money arrived but matched no plan: alert the owner to fulfill it
       // manually instead of dropping it like a failed verify.
       try {
@@ -438,20 +455,23 @@ module.exports = async (req, res) => {
       } catch (_) {}
     };
 
-    // ===== Monthly pass: 30 days per ₦2,000, renews by paying again =====
-    if (isMonthly) {
+    // ===== Monthly-like: 30 days per payment, renews by paying again =====
+    // monthly (₦2,000) and ai_monthly (₦5,000, AI unlocked) share this path.
+    if (isMonthlyLike) {
       const claim = await rpc("claim_or_renew_monthly", {
         p_email: email,
         p_ref: verified.reference,
         p_days: monthlyDays,
+        ...planArg,
       });
       const key = claim && claim.key;
       const expiresAt = claim && claim.expires_at;
       const isNew = !claim || claim.new !== false;
+      const planLabel = hasAI ? "AI monthly pass" : "monthly pass";
 
       if (isNew) {
         await alertOwner(
-          `Monthly pass (${monthlyDays} days)${
+          `${planLabel} (${monthlyDays} days)${
             expiresAt ? `, active until ${fmtDate(expiresAt)}` : ""
           }`,
         );
@@ -461,7 +481,7 @@ module.exports = async (req, res) => {
           await sendEmail(
             process.env.ADMIN_EMAIL || "me@rufaiahmed.com",
             "Human Typer: license key pool is EMPTY",
-            `<p>Paid monthly order ${reference} (${email}) could not be fulfilled; no unsold keys left. Add keys + re-seed Supabase, then issue manually.</p>`,
+            `<p>Paid ${planLabel} order ${reference} (${email}) could not be fulfilled; no unsold keys left. Add keys + re-seed Supabase, then issue manually.</p>`,
           );
         } catch (_) {}
         res.status(200).json({ ok: false, status: "out_of_keys", email });
@@ -469,35 +489,25 @@ module.exports = async (req, res) => {
       }
       if (!isNew) {
         res.status(200).json({
-          ok: true,
-          status: "already_processed",
-          email,
-          plan: "monthly",
-          count: 1,
-          expires_at: expiresAt,
+          ok: true, status: "already_processed", email, plan, count: 1, expires_at: expiresAt,
         });
         return;
       }
       await sendEmail(
         email,
-        "Your Human Typer monthly pass",
-        monthlyEmailHtml(key, expiresAt, downloadUrl),
+        hasAI ? "Your Human Typer AI monthly pass" : "Your Human Typer monthly pass",
+        monthlyEmailHtml(key, expiresAt, downloadUrl, hasAI),
       );
       await maybeTopUpPool();
       res.status(200).json({
-        ok: true,
-        status: "key_sent",
-        email,
-        plan: "monthly",
-        count: 1,
-        expires_at: expiresAt,
+        ok: true, status: "key_sent", email, plan, count: 1, expires_at: expiresAt,
       });
       return;
     }
 
-    // ===== Lifetime: one-time single or team/volume packs =====
-    // How many keys this payment is owed, from the VERIFIED amount only.
-    const qty = seatsForAmount(amount);
+    // ===== Lifetime-like: one-time. lifetime (₦10,000, team packs) and
+    // ai_lifetime (₦15,000, 1 key, AI unlocked). =====
+    const qty = plan === "ai_lifetime" ? 1 : graded.seats;
 
     // Atomically claim up to `qty` unsold keys. Idempotent per reference: a repeat
     // call for the same payment returns the SAME keys and never allocates more.
@@ -505,12 +515,15 @@ module.exports = async (req, res) => {
       p_email: email,
       p_ref: verified.reference,
       p_qty: qty,
+      ...planArg,
     });
     const keys = (claim && claim.keys) || [];
     const count = keys.length;
 
     if (!claim || claim.new !== false) {
-      await alertOwner(`Lifetime, ${count} of ${qty} key(s) delivered`);
+      await alertOwner(
+        `${hasAI ? "AI Lifetime" : "Lifetime"}, ${count} of ${qty} key(s) delivered`,
+      );
     }
 
     if (count === 0) {
@@ -528,7 +541,7 @@ module.exports = async (req, res) => {
     if (claim.new === false) {
       res
         .status(200)
-        .json({ ok: true, status: "already_processed", email, plan: "lifetime", count });
+        .json({ ok: true, status: "already_processed", email, plan, count });
       return;
     }
 
@@ -546,10 +559,12 @@ module.exports = async (req, res) => {
     const subject =
       count > 1
         ? `Your ${count} Human Typer license keys`
-        : "Your Human Typer license key";
-    await sendEmail(email, subject, keysEmailHtml(keys, downloadUrl));
+        : hasAI
+          ? "Your Human Typer AI Lifetime key"
+          : "Your Human Typer license key";
+    await sendEmail(email, subject, keysEmailHtml(keys, downloadUrl, hasAI));
     await maybeTopUpPool();
-    res.status(200).json({ ok: true, status: "key_sent", email, plan: "lifetime", count });
+    res.status(200).json({ ok: true, status: "key_sent", email, plan, count });
   } catch (err) {
     // 500 lets the provider's webhook retry on transient failures.
     res
