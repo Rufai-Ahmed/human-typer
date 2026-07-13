@@ -16,6 +16,14 @@
 
 begin;
 
+-- Fail fast instead of jamming the money path: the ALTER below takes an ACCESS
+-- EXCLUSIVE lock on licenses, and a live activate_key / claim_* holding a row lock
+-- would make it block AND queue every following activation/claim behind it. With a
+-- short lock_timeout the whole (atomic) migration just rolls back and you re-run it;
+-- nothing is half-applied. Best run during a quiet moment regardless.
+set local lock_timeout = '3s';
+set local idle_in_transaction_session_timeout = '10s';
+
 -- 1. Override column ---------------------------------------------------------
 alter table public.licenses add column if not exists ai_enabled boolean;
 
