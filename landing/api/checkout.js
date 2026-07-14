@@ -41,33 +41,36 @@ module.exports = async (req, res) => {
     return;
   }
   const PLANS = new Set(["monthly", "ai_monthly", "lifetime", "ai_lifetime"]);
-  const plan = PLANS.has(body.plan) ? body.plan : "lifetime";
-  // Only the no-AI lifetime plan has team/volume seats; the rest are 1 device.
-  const seats = plan === "lifetime" ? Number(body.seats) || 1 : 1;
+  const plan = PLANS.has(body.plan) ? body.plan : "ai_lifetime";
+  // The two lifetime plans have team/volume seats; the monthly plans are 1 device.
+  const teamPlan = plan === "lifetime" || plan === "ai_lifetime";
+  const seats = teamPlan ? Number(body.seats) || 1 : 1;
   if (!VALID_SEATS.has(seats)) {
     res.status(400).json({ ok: false, error: "Invalid seat count" });
     return;
   }
 
-  // Prices in naira (the v3 checkout unit). Team seats apply to "lifetime" only.
-  // Keep in sync with the tier table in api/claim.js.
+  // Prices in naira (the v3 checkout unit). Keep per-seat tables in sync with
+  // the tier table in api/claim.js.
   const priceNaira = parseInt(process.env.PRICE_KOBO || "1000000", 10) / 100;
-  const PER_SEAT_NAIRA = { 1: priceNaira, 5: 8000, 10: 7000, 25: 6000 };
+  const PER_SEAT_NAIRA = { 1: priceNaira, 5: 8000, 10: 7000, 25: 6000 }; // no-AI lifetime
+  const PER_SEAT_AI_NAIRA = { 1: 15000, 5: 12000, 10: 10500, 25: 9000 }; // AI lifetime
   const PLAN_NAIRA = {
     monthly: parseInt(process.env.MONTHLY_KOBO || "200000", 10) / 100, // ₦2,000
     ai_monthly: parseInt(process.env.AI_MONTHLY_KOBO || "500000", 10) / 100, // ₦5,000
-    ai_lifetime: parseInt(process.env.AI_LIFETIME_KOBO || "1500000", 10) / 100, // ₦15,000
   };
   const amount =
-    plan === "lifetime" ? PER_SEAT_NAIRA[seats] * seats : PLAN_NAIRA[plan];
+    plan === "lifetime" ? PER_SEAT_NAIRA[seats] * seats :
+    plan === "ai_lifetime" ? PER_SEAT_AI_NAIRA[seats] * seats :
+    PLAN_NAIRA[plan];
 
   // Refuse to create a payment on a broken price config (mirrors claim.js grading
-  // order) rather than charge a wrong amount.
+  // order: monthly < ai_monthly < lifetime single < ai_lifetime single).
   if (
     !(amount > 0) ||
     !(PLAN_NAIRA.monthly < PLAN_NAIRA.ai_monthly &&
       PLAN_NAIRA.ai_monthly < PER_SEAT_NAIRA[1] &&
-      PER_SEAT_NAIRA[1] < PLAN_NAIRA.ai_lifetime)
+      PER_SEAT_NAIRA[1] < PER_SEAT_AI_NAIRA[1])
   ) {
     res.status(503).json({ ok: false, error: "Payments are temporarily unavailable." });
     return;

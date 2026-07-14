@@ -379,11 +379,14 @@ module.exports = async (req, res) => {
   // amount is the exact sticker price, so these floors never collide across the
   // four plans + lifetime team packs. Sorted desc so env overrides can't misorder.
   const TIERS = [
-    { plan: "lifetime", seats: 25, kobo: 15000000 }, // ₦6,000/seat
-    { plan: "lifetime", seats: 10, kobo: 7000000 }, // ₦7,000/seat
-    { plan: "lifetime", seats: 5, kobo: 4000000 }, // ₦8,000/seat
+    { plan: "ai_lifetime", seats: 25, kobo: 22500000 }, // ₦9,000/seat + AI
+    { plan: "lifetime", seats: 25, kobo: 15000000 }, // ₦6,000/seat (legacy team)
+    { plan: "ai_lifetime", seats: 10, kobo: 10500000 }, // ₦10,500/seat + AI
+    { plan: "lifetime", seats: 10, kobo: 7000000 }, // ₦7,000/seat (legacy team)
+    { plan: "ai_lifetime", seats: 5, kobo: 6000000 }, // ₦12,000/seat + AI
+    { plan: "lifetime", seats: 5, kobo: 4000000 }, // ₦8,000/seat (legacy team)
     { plan: "ai_lifetime", seats: 1, kobo: aiLifetimeKobo }, // ₦15,000 + AI
-    { plan: "lifetime", seats: 1, kobo: priceKobo }, // ₦10,000 single
+    { plan: "lifetime", seats: 1, kobo: priceKobo }, // ₦10,000 single (legacy)
     { plan: "ai_monthly", seats: 1, kobo: aiMonthlyKobo }, // ₦5,000 + AI
     { plan: "monthly", seats: 1, kobo: monthlyKobo }, // ₦2,000
   ].sort((a, b) => b.kobo - a.kobo);
@@ -508,9 +511,9 @@ module.exports = async (req, res) => {
       return;
     }
 
-    // ===== Lifetime-like: one-time. lifetime (₦10,000, team packs) and
-    // ai_lifetime (₦15,000, 1 key, AI unlocked). =====
-    const qty = plan === "ai_lifetime" ? 1 : graded.seats;
+    // ===== Lifetime-like: one-time. lifetime (₦10,000 legacy, team packs) and
+    // ai_lifetime (₦15,000, team packs, AI unlocked). Both hand out `seats` keys. =====
+    const qty = graded.seats;
 
     // Atomically claim up to `qty` unsold keys. Idempotent per reference: a repeat
     // call for the same payment returns the SAME keys and never allocates more.

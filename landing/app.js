@@ -35,11 +35,8 @@ document.getElementById('year').textContent = new Date().getFullYear();
 
 // --- Flutterwave checkout (pay by bank transfer): two cards (lifetime + monthly) ---
 (() => {
-    // Per-seat price in kobo, for DISPLAY only. The server (api/checkout.js)
-    // recomputes the real amount and api/claim.js grades the verified payment.
-    const PER_SEAT_KOBO = { 1: 1000000, 5: 800000, 10: 700000, 25: 600000 };
-    const MONTHLY_KOBO = 200000;
-
+    // Per-seat prices for DISPLAY are defined per-card below; the server
+    // (api/checkout.js) recomputes the real amount and api/claim.js grades it.
     const naira = (kobo) => '₦' + Math.round(kobo / 100).toLocaleString('en-NG');
     const nairaFromN = (n) => '₦' + Number(n).toLocaleString('en-NG');
     const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
@@ -184,26 +181,28 @@ document.getElementById('year').textContent = new Date().getFullYear();
         });
     }
 
-    // ---- Lifetime card (single + team seats) ----
+    // ---- AI Lifetime card (single + team seats) ----
     (() => {
-        const btn = document.getElementById('btn-buy-lifetime');
-        const emailInput = document.getElementById('buyer-email-lifetime');
-        const seatOptions = document.getElementById('seat-options');
-        const priceAmount = document.getElementById('price-amount-lifetime');
+        const btn = document.getElementById('btn-buy-ai-lifetime');
+        const emailInput = document.getElementById('buyer-email-ai-lifetime');
+        const seatOptions = document.getElementById('seat-options-ai');
+        const priceAmount = document.getElementById('price-amount-ai-lifetime');
         if (!btn) return;
-        const msgEl = document.getElementById('buy-msg-lifetime');
+        const msgEl = document.getElementById('buy-msg-ai-lifetime');
         const showMsg = makeShowMsg(msgEl);
+        // Per-seat AI Lifetime price in kobo; MUST match PER_SEAT_AI_NAIRA in api/checkout.js.
+        const PER_SEAT_AI_KOBO = { 1: 1500000, 5: 1200000, 10: 1050000, 25: 900000 };
         let seats = 1;
 
         function refresh() {
-            const total = PER_SEAT_KOBO[seats] * seats;
+            const total = PER_SEAT_AI_KOBO[seats] * seats;
             if (priceAmount) {
                 const tail = seats === 1 ? ' once' : ' for ' + seats + ' seats';
                 priceAmount.innerHTML = naira(total) + '<span class="price-once">' + tail + '</span>';
             }
             btn.textContent = seats === 1
-                ? 'Buy lifetime access for ' + naira(total)
-                : 'Buy ' + seats + ' seats for ' + naira(total);
+                ? 'Buy AI Lifetime for ' + naira(total)
+                : 'Buy ' + seats + ' AI seats for ' + naira(total);
         }
 
         if (seatOptions) {
@@ -211,7 +210,7 @@ document.getElementById('year').textContent = new Date().getFullYear();
                 const opt = e.target.closest('.seat-opt');
                 if (!opt || !seatOptions.contains(opt)) return;
                 const n = parseInt(opt.getAttribute('data-seats'), 10);
-                if (!PER_SEAT_KOBO[n]) return;
+                if (!PER_SEAT_AI_KOBO[n]) return;
                 seats = n;
                 setActive(seatOptions, (b) => b === opt);
                 refresh();
@@ -220,41 +219,21 @@ document.getElementById('year').textContent = new Date().getFullYear();
         refresh();
 
         btn.addEventListener('click', () => {
-            track('buy-clicked', { plan: 'lifetime', seats });
+            track('buy-clicked', { plan: 'ai_lifetime', seats });
             const email = (emailInput.value || '').trim();
             if (!validEmail(email)) {
                 showMsg('Please enter a valid email. That is where your key is sent.', true);
                 emailInput.focus();
                 return;
             }
-            runCheckout({ email, plan: 'lifetime', seats, showMsg, msgEl });
+            runCheckout({ email, plan: 'ai_lifetime', seats, showMsg, msgEl });
         });
     })();
 
-    // ---- Monthly card ----
-    (() => {
-        const btn = document.getElementById('btn-buy-monthly');
-        const emailInput = document.getElementById('buyer-email-monthly');
-        if (!btn) return;
-        const msgEl = document.getElementById('buy-msg-monthly');
-        const showMsg = makeShowMsg(msgEl);
-
-        btn.addEventListener('click', () => {
-            track('buy-clicked', { plan: 'monthly' });
-            const email = (emailInput.value || '').trim();
-            if (!validEmail(email)) {
-                showMsg('Please enter a valid email. That is where your key is sent.', true);
-                emailInput.focus();
-                return;
-            }
-            runCheckout({ email, plan: 'monthly', seats: 1, showMsg, msgEl });
-        });
-    })();
-
-    // ---- AI plan cards (monthly + lifetime; single email + buy, no seats) ----
+    // ---- AI Monthly + Monthly cards (single email + buy, no seats) ----
     [
         { btn: 'btn-buy-ai-monthly', email: 'buyer-email-ai-monthly', msg: 'buy-msg-ai-monthly', plan: 'ai_monthly' },
-        { btn: 'btn-buy-ai-lifetime', email: 'buyer-email-ai-lifetime', msg: 'buy-msg-ai-lifetime', plan: 'ai_lifetime' },
+        { btn: 'btn-buy-monthly', email: 'buyer-email-monthly', msg: 'buy-msg-monthly', plan: 'monthly' },
     ].forEach((c) => {
         const btn = document.getElementById(c.btn);
         const emailInput = document.getElementById(c.email);
@@ -337,7 +316,7 @@ document.getElementById('year').textContent = new Date().getFullYear();
     if (!cta) return;
     const text = cta.querySelector('.cta-text');
     if (!text) return;
-    const labels = ['Get it for ₦10,000 once', 'Get it for ₦2,000/month'];
+    const labels = ['Get it from ₦2,000/month', 'Lifetime + AI for ₦15,000'];
     if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     let i = 0;
     setInterval(() => {
