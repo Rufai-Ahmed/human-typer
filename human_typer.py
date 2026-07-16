@@ -5,12 +5,15 @@ Human Typer — simulate human typing at the OS level.
 Generates real keystrokes. On macOS, this is done natively via CoreGraphics (ctypes)
 to bypass external library requirements. On Windows/Linux it uses pynput.
 
-Speed is set as a per-keystroke delay (2-200 ms). With "Humanize" on, the rhythm
-is drawn from a Gaussian around that delay, with bigram (layout-proximity) flight
-timing, word/sentence pauses, occasional hesitations, and optional typo+correction
-loops, so the result looks hand-typed rather than metronomic.
+Speed is set as a per-keystroke delay (2-200 ms). With "Humanize" on, each
+interval is drawn right-skewed (log-normal) around that delay and shaped by a
+slowly drifting tempo, the digraph's hand/finger pattern (alternation is fast,
+same-finger is slow), mid-word slowing, word/sentence pauses, hesitations, and
+optional typo+correction loops. A per-run normalizer keeps the average speed
+pinned to the chosen delay, so the result looks hand-typed rather than
+metronomic without drifting off the speed you set.
 
-Press Esc at any time to abort — globally, even when another app has focus.
+Press Esc at any time to abort, globally, even when another app has focus.
 
 Usage:
     python human_typer.py                       # Native app window (default)
@@ -110,42 +113,105 @@ QWERTY_NEIGHBORS = {
     "z": "asx",
 }
 
-# Approximate physical coordinates of each key on a staggered QWERTY layout, used
-# to model "flight time" between consecutive keys (bigrams): distant keys take
-# longer to reach and hand-alternation flows faster — the way real typing moves.
-_ROWS = ["qwertyuiop", "asdfghjkl", "zxcvbnm"]
-_ROW_STAGGER = [0.0, 0.5, 1.0]
-KEY_COORDS = {}
-for _r, _keys in enumerate(_ROWS):
-    for _c, _k in enumerate(_keys):
-        KEY_COORDS[_k] = (float(_r), _c + _ROW_STAGGER[_r])
+# Finger/hand assignment for each letter on QWERTY (finger 1=index .. 4=pinky).
+# The dominant driver of real inter-key timing is which hand/finger types the
+# next key, not raw geometric distance: hand alternation is fast, same-finger
+# transitions are slow (Salthouse 1986; Feit 2016 "How We Type"; Dhakal 2018).
+FINGER_MAP = {
+    "q": ("L", 4), "a": ("L", 4), "z": ("L", 4),
+    "w": ("L", 3), "s": ("L", 3), "x": ("L", 3),
+    "e": ("L", 2), "d": ("L", 2), "c": ("L", 2),
+    "r": ("L", 1), "f": ("L", 1), "v": ("L", 1),
+    "t": ("L", 1), "g": ("L", 1), "b": ("L", 1),
+    "y": ("R", 1), "h": ("R", 1), "u": ("R", 1),
+    "j": ("R", 1), "n": ("R", 1), "m": ("R", 1),
+    "i": ("R", 2), "k": ("R", 2),
+    "o": ("R", 3), "l": ("R", 3),
+    "p": ("R", 4),
+}
+REACH_CHARS = set("1234567890!@#$%^&*()-_=+[]{}\\|`~")  # number row / top-symbol reaches
+BOUNDARY = {" ", "\n", "\t"}
 
-_LEFT_HAND = set("qwertasdfgzxcvb")
-_RIGHT_HAND = set("yuiophjklnm")
+# Digraph timing multipliers, relative to the mean inter-key interval (1.0).
+ALT = 0.85          # different hands: the fastest and most common transition
+SAME_HAND = 0.97    # same hand, different finger
+SAME_FINGER = 1.25  # same finger, different key: mechanically the slowest
+REPEAT = 0.92       # a doubled letter re-strikes quickly
+SPACE = 1.05        # to/from the space bar
+NEUTRAL = 1.0
+REACH = 1.60        # number-row / symbol reach
+SHIFT = 1.50        # holding shift for a capital
+ROLL_LO, ROLL_HI, ROLL_MEAN = 0.55, 0.82, 0.685  # rollover discount on ALT/SAME_HAND
+ROLL_MAX = 0.50     # peak rollover probability (fast personas only)
+INVU_AMP, INVU_PEAK, INVU_WID = 0.10, 3, 1.6     # mid-word slowing bump
+TEMPO_PHI = 0.965   # OU tempo persistence (autocorrelated rhythm drift)
+TEMPO_SIGMA0 = 0.085  # tempo wander; sized so successive intervals stay correlated
+LOGT_CLAMP = 0.55   # bound on log-tempo so drift stays in ~[0.6, 1.7] at the extreme
+STRUCT_TARGET = 0.93  # E[core] = STRUCT_TARGET * base; 0.93 keeps legacy prose speed
+NOISE_CLAMP = 3.0   # +/- sigma clamp on every gaussian draw
+HARD_CAP = 6.0      # per-key hard ceiling (seconds), a runaway backstop
+POST_ERROR_MULT = 1.35  # the key right after a correction runs slower
+REACT_MEAN = 0.30   # one-time reaction pause before the first key
 
 
-def _hand(ch: str):
-    if ch in _LEFT_HAND:
-        return "L"
-    if ch in _RIGHT_HAND:
-        return "R"
-    return None
+def _clamp(v, lo, hi):
+    return lo if v < lo else (hi if v > hi else v)
 
 
-def bigram_factor(prev_char: str, cur_char: str) -> float:
-    """Scale the base delay by how far the fingers travel from prev -> cur."""
-    a, b = prev_char.lower(), cur_char.lower()
-    if a not in KEY_COORDS or b not in KEY_COORDS:
+def _cgauss(mu: float, sigma: float) -> float:
+    """Gaussian draw with the tail clamped to +/- NOISE_CLAMP sigma."""
+    return mu + sigma * _clamp(random.gauss(0.0, 1.0), -NOISE_CLAMP, NOISE_CLAMP)
+
+
+def _lognorm_mean(m: float, cv: float) -> float:
+    """Right-skewed positive sample with expectation exactly m and given CoV."""
+    if not (m > 0.0):  # also rejects NaN
+        return 0.0
+    s2 = math.log(1.0 + cv * cv)
+    arg = _cgauss(math.log(m) - 0.5 * s2, math.sqrt(s2))
+    if not math.isfinite(arg):  # NaN cv etc.
+        return m
+    return math.exp(min(arg, 700.0))  # 700 keeps exp finite for any input
+
+
+def _is_reach(ch: str) -> bool:
+    return ch in REACH_CHARS
+
+
+def _key(ch: str):
+    return FINGER_MAP.get(ch.lower())
+
+
+def struct_mult(prev: str, cur: str):
+    """Deterministic digraph multiplier and whether the pair can roll over.
+
+    Returns (multiplier relative to mean IKI, rollover_eligible). Used with
+    identical inputs both in the per-run normalizer prescan and at runtime, so
+    the run's mean stays pinned to STRUCT_TARGET * base for any text.
+    """
+    if prev == "":
+        return (1.0, False)
+    reach = REACH if (_is_reach(prev) or _is_reach(cur)) else 1.0
+    shift = SHIFT if (cur.isalpha() and cur.isupper()) else 1.0
+    if prev == " " or cur == " ":
+        return (SPACE * reach * shift, False)
+    a, b = _key(prev), _key(cur)
+    if a is None or b is None:
+        return (NEUTRAL * reach * shift, False)
+    if prev.lower() == cur.lower():
+        return (REPEAT * reach * shift, False)
+    if a[0] == b[0] and a[1] == b[1]:
+        return (SAME_FINGER * reach * shift, False)
+    if a[0] == b[0]:
+        return (SAME_HAND * reach * shift, True)
+    return (ALT * reach * shift, True)
+
+
+def _pos_shape(pos: int) -> float:
+    """Inverted-U mid-word slowing: word-initial is 1.0, peaks a few keys in."""
+    if pos <= 0:
         return 1.0
-    if a == b:
-        return 0.78  # repeating a key is quick
-    (r1, c1), (r2, c2) = KEY_COORDS[a], KEY_COORDS[b]
-    dist = math.hypot(r1 - r2, c1 - c2)
-    factor = 0.72 + 0.07 * dist
-    ha, hb = _hand(a), _hand(b)
-    if ha and hb:
-        factor *= 0.9 if ha != hb else 1.06  # alternating hands flow faster
-    return max(0.6, min(1.7, factor))
+    return 1.0 + INVU_AMP * math.exp(-((pos - INVU_PEAK) ** 2) / (2.0 * INVU_WID ** 2))
 
 
 @dataclass
@@ -164,6 +230,52 @@ class TypingProfile:
     @property
     def mean_delay(self) -> float:
         return max(self.delay_ms, 0.0) / 1000.0
+
+
+class RhythmState:
+    """Per-run typing rhythm: a slowly drifting tempo, within-word position, and
+    a normalizer that pins the run's mean inter-key interval to the speed knob.
+
+    Built once per run (only when humanizing); never shared across concurrent
+    runs (the server serializes /api/type via _start_lock).
+    """
+
+    __slots__ = ("sigma_noise", "p_roll", "tempo_sigma", "tempo_var",
+                 "log_tempo", "pos_in_word", "first_key", "post_error", "norm")
+
+    def __init__(self, text: str, profile: "TypingProfile"):
+        self.sigma_noise = _clamp(profile.variance, 0.0, 0.6)
+        skill = _clamp((250.0 - profile.delay_ms) / 195.0, 0.0, 1.0)  # fast keys -> 1
+        self.p_roll = ROLL_MAX * skill              # only fast personas roll over
+        self.tempo_sigma = TEMPO_SIGMA0 * (1.0 - 0.4 * skill)  # experts drift less
+        self.tempo_var = self.tempo_sigma ** 2 / (1.0 - TEMPO_PHI ** 2)  # OU stationary var
+        self.log_tempo = 0.0
+        self.pos_in_word = 0
+        self.first_key = True
+        self.post_error = False
+        self.norm = self._compute_norm(text)
+
+    def _compute_norm(self, text: str) -> float:
+        # One O(n) pass over the text averaging the deterministic factor
+        # (expected structure * mid-word shape, with expected rollover folded
+        # in). Dividing it out makes E[core] = STRUCT_TARGET * base exactly, for
+        # any text (prose, code, digits), so the speed slider always means the
+        # same effective speed.
+        total = 0.0
+        n = 0
+        pos = 0
+        prev = ""
+        for ch in text:
+            b, eligible = struct_mult(prev, ch)
+            if eligible:
+                b *= (1.0 - self.p_roll * (1.0 - ROLL_MEAN))
+            cur_pos = 0 if (prev == "" or prev in BOUNDARY) else pos + 1
+            total += b * _pos_shape(cur_pos)
+            pos = cur_pos
+            n += 1
+            prev = ch
+        mean_bp = (total / n) if n else 1.0
+        return STRUCT_TARGET / mean_bp if mean_bp else STRUCT_TARGET
 
 
 # Thread-safe global typing state for the GUI backend.
@@ -375,7 +487,7 @@ def _fire_quick_type() -> None:
         typing_status.focus_guard = False   # quick-type goes wherever you already are
         typing_status.run_id += 1
         try:
-            threading.Thread(target=type_text, args=(text, TypingProfile(), 1.0, True), daemon=True).start()
+            threading.Thread(target=_typing_thread, args=(text, TypingProfile(), 1.0), daemon=True).start()
         except Exception:
             typing_status.state = "idle"
 
@@ -532,7 +644,7 @@ ACTIVATE_URL = os.environ.get(
 
 # Bump this on every release; the app compares it to the server's latest version
 # and shows a "Download update" banner when this build is behind.
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.8.0"
 VERSION_URL = os.environ.get(
     "HUMANTYPER_VERSION_URL", ACTIVATE_URL.rsplit("/api/", 1)[0] + "/api/version"
 )
@@ -1079,31 +1191,61 @@ def request_input_monitoring() -> None:
             pass
 
 
-def _gauss_positive(mean: float, rel_std: float) -> float:
-    """Gaussian sample folded to stay non-negative."""
-    return abs(random.gauss(mean, mean * rel_std))
+def keystroke_delay(prev_char: str, cur_char: str, profile: TypingProfile,
+                    state: "RhythmState" = None) -> float:
+    """Compute how long to wait *before* typing the next char.
 
-
-def keystroke_delay(prev_char: str, cur_char: str, profile: TypingProfile) -> float:
-    """Compute how long to wait *before* typing the next char."""
+    core = base * norm * struct * mid_word * tempo * noise, plus additive
+    word/sentence/hesitation pauses. Every random factor is built with mean 1
+    (or with expectation equal to its knob), and `norm` divides out the run's
+    deterministic structure, so E[core] stays at STRUCT_TARGET * base and the
+    speed knob keeps meaning the same effective speed.
+    """
+    floor = max(profile.min_delay, 0.0)  # never a negative sleep, even on bad input
     base = profile.mean_delay
     if not profile.humanize:
-        return max(profile.min_delay, base)
+        return max(floor, base) if math.isfinite(base) else floor
+    if state is None:  # defensive: type_text always supplies one
+        state = RhythmState(cur_char, profile)
 
-    base *= bigram_factor(prev_char, cur_char)
-    d = random.gauss(base, base * profile.variance)
-    d = max(profile.min_delay, d)
+    if prev_char == "" or prev_char in BOUNDARY:
+        state.pos_in_word = 0
+    else:
+        state.pos_in_word += 1
 
+    state.log_tempo = TEMPO_PHI * state.log_tempo + random.gauss(0.0, state.tempo_sigma)
+    state.log_tempo = _clamp(state.log_tempo, -LOGT_CLAMP, LOGT_CLAMP)
+    tempo = math.exp(state.log_tempo - 0.5 * state.tempo_var)  # E[tempo] = 1
+
+    b, eligible = struct_mult(prev_char, cur_char)
+    if eligible and random.random() < state.p_roll:
+        b *= random.uniform(ROLL_LO, ROLL_HI)  # burst through a common bigram
+
+    p = _pos_shape(state.pos_in_word)
+    n = _lognorm_mean(1.0, state.sigma_noise)
+
+    core = base * state.norm * b * p * tempo * n
+    if state.post_error:
+        core *= POST_ERROR_MULT
+        state.post_error = False
+
+    d = core
     if profile.pauses:
+        if state.first_key:
+            d += min(1.2, _lognorm_mean(REACT_MEAN, 0.4))
+            state.first_key = False
         if prev_char == " ":
-            d += _gauss_positive(profile.word_pause, 0.5)
+            d += _lognorm_mean(profile.word_pause, 0.5)
         elif prev_char in ".!?":
-            d += _gauss_positive(profile.sentence_pause, 0.5)
+            d += _lognorm_mean(profile.sentence_pause, 0.5)
         elif prev_char in ",;:":
-            d += _gauss_positive(profile.word_pause * 0.8, 0.5)
+            d += _lognorm_mean(profile.word_pause * 0.8, 0.5)
         if random.random() < profile.hesitation_prob:
-            d += _gauss_positive(profile.hesitation, 0.5)
-    return d
+            d += _lognorm_mean(profile.hesitation, 0.5)
+
+    if not math.isfinite(d):  # a pathological knob can't crash the typing thread
+        return floor
+    return min(HARD_CAP, max(floor, d))
 
 
 def _post_keycode_macos(code: int) -> None:
@@ -1171,10 +1313,13 @@ def press_char(kb, ch: str) -> None:
             kb.type(ch)
 
 
-def maybe_typo(kb, ch: str, profile: TypingProfile) -> None:
-    """
-    Occasionally fat-finger an adjacent key, pause as a human would notice it,
-    backspace, then continue (the correct char is typed by the caller after).
+def maybe_typo(kb, ch: str, profile: TypingProfile, state: "RhythmState" = None) -> None:
+    """Occasionally slip a key, pause as a human would notice it, backspace, then
+    let the caller type the correct char.
+
+    Always self-correcting: an error is a wrong key plus a backspace, so the net
+    emitted text is byte-identical to the input. The realism is in the visible
+    slip-pause-backspace-retype, not in any lasting mistake in the document.
     """
     if profile.typo_prob <= 0:
         return
@@ -1182,16 +1327,17 @@ def maybe_typo(kb, ch: str, profile: TypingProfile) -> None:
     if low not in QWERTY_NEIGHBORS or random.random() >= profile.typo_prob:
         return
 
-    wrong = random.choice(QWERTY_NEIGHBORS[low])
+    base = profile.mean_delay
+    wrong = random.choice(QWERTY_NEIGHBORS[low])  # a substitution or an inserted key
     if ch.isupper():
         wrong = wrong.upper()
 
     press_char(kb, wrong)
-    time.sleep(keystroke_delay(wrong, "\b", profile))
-    # Human reaction lag before spotting and fixing the mistake.
-    time.sleep(_gauss_positive(0.25, 0.6))
+    time.sleep(min(1.5, _lognorm_mean(max(0.35, 2.0 * base), 0.4)))  # notice it
     press_char(kb, "\b")
-    time.sleep(keystroke_delay("\b", ch, profile))
+    time.sleep(min(1.0, _lognorm_mean(max(0.14, 0.9 * base), 0.3)))  # settle back
+    if state is not None:
+        state.post_error = True  # the next real key runs a touch slower
 
 
 def type_text(text: str, profile: TypingProfile, countdown: float, is_gui: bool = False) -> None:
@@ -1265,6 +1411,7 @@ def type_text(text: str, profile: TypingProfile, countdown: float, is_gui: bool 
 
     start = time.perf_counter()
     prev = ""
+    rhythm = RhythmState(text, profile) if profile.humanize else None
     for idx, ch in enumerate(text):
         if is_gui:
             # Pause: block here while paused, until resumed or cancelled.
@@ -1281,14 +1428,14 @@ def type_text(text: str, profile: TypingProfile, countdown: float, is_gui: bool 
             typing_status.elapsed_time = time.perf_counter() - start
             typing_status.effective_wpm = (idx / 5.0) / (typing_status.elapsed_time / 60.0) if typing_status.elapsed_time else 0.0
 
-        time.sleep(keystroke_delay(prev, ch, profile))
+        time.sleep(keystroke_delay(prev, ch, profile, rhythm))
 
         # Double check the cancel event right before the keystroke.
         if is_gui and typing_status.cancel_event.is_set():
             typing_status.state = "aborted"
             return
 
-        maybe_typo(kb, ch, profile)
+        maybe_typo(kb, ch, profile, rhythm)
 
         if is_gui and typing_status.cancel_event.is_set():
             typing_status.state = "aborted"
@@ -1308,6 +1455,17 @@ def type_text(text: str, profile: TypingProfile, countdown: float, is_gui: bool 
         typing_status.state = "done"
     else:
         print(f"\nDone — {len(text)} chars in {elapsed:.1f}s (~{effective_wpm:.0f} WPM).")
+
+
+def _typing_thread(text: str, profile: TypingProfile, countdown: float) -> None:
+    """Worker target for GUI runs: any unexpected failure resets the state to
+    'aborted' so a crash can never leave the endpoint stuck reporting 'typing'."""
+    try:
+        type_text(text, profile, countdown, is_gui=True)
+    except Exception as exc:  # never wedge the paid endpoint on a bad run
+        typing_status.state = "aborted"
+        typing_status.pause_event.clear()
+        _log_launch(f"typing thread aborted: {exc!r}")
 
 
 def _read_clipboard_windows() -> str:
@@ -1566,8 +1724,8 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
 
                     try:
                         t = threading.Thread(
-                            target=type_text,
-                            args=(text, profile, delay, True),
+                            target=_typing_thread,
+                            args=(text, profile, delay),
                             daemon=True
                         )
                         t.start()
