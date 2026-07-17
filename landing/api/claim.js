@@ -204,14 +204,17 @@ async function rpc(fn, args) {
 // Everyone who gets the "money arrived" alerts. PAYMENT_ALERT_EMAIL (comma-
 // separated) adds recipients on top of the built-in owner addresses.
 const PAYMENT_ALERT_TO = [...new Set(
-  `${process.env.PAYMENT_ALERT_EMAIL || ""},payment@rufaiahmed.com,mailoctavemusic@gmail.com`
+  `${process.env.PAYMENT_ALERT_EMAIL || ""},alert@rufaiahmed.com,mailoctavemusic@gmail.com`
     .split(",").map((s) => s.trim()).filter(Boolean),
 )];
 
 async function sendEmail(to, subject, html) {
+  // rufaiahmed.com is an old .com with sender reputation; humantyper.online is a
+  // new .online domain that SpamAssassin (e.g. ImprovMX) scores as spam, so send
+  // from the .com by default and only fall back to the .online if it is rejected.
   const primary =
-    process.env.MAIL_FROM || "Human Typer <keys@updates.humantyper.online>";
-  const legacy = "Human Typer <keys@updates.rufaiahmed.com>";
+    process.env.MAIL_FROM || "Human Typer <keys@updates.rufaiahmed.com>";
+  const legacy = "Human Typer <keys@updates.humantyper.online>";
   const post = (from) =>
     fetch("https://api.resend.com/emails", {
       method: "POST",

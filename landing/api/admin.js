@@ -102,8 +102,8 @@ async function count(table, filter) {
 }
 
 async function sendEmail(to, subject, html) {
-  const primary = process.env.MAIL_FROM || "Human Typer <keys@updates.humantyper.online>";
-  const legacy = "Human Typer <keys@updates.rufaiahmed.com>";
+  const primary = process.env.MAIL_FROM || "Human Typer <keys@updates.rufaiahmed.com>";
+  const legacy = "Human Typer <keys@updates.humantyper.online>";
   const post = (from) =>
     fetch("https://api.resend.com/emails", {
       method: "POST",
