@@ -13,6 +13,9 @@
 // Vercel env: GEMINI_API_KEY (the owner's free key), SUPABASE_URL,
 //   SUPABASE_SERVICE_ROLE_KEY. Optional: GEMINI_MODEL (default gemini-2.0-flash),
 //   AI_DAILY_MAX (default 200), AI_MAX_CHARS (default 8000).
+// Optional Agent Router (agentrouter.org, Anthropic-compatible): AGENTROUTER_API_KEY
+//   makes it the primary backend (prepaid credit) with Gemini as the fallback;
+//   AGENTROUTER_MODEL (default claude-opus-4-8), AGENTROUTER_BASE_URL, AGENTROUTER_UA.
 
 const { SYSTEM_PROMPT } = require("./_prompt");
 
@@ -84,6 +87,55 @@ async function gemini(text) {
   throw new Error(lastErr + " (no free model had quota; enable billing on the Gemini key to lift this).");
 }
 
+// Agent Router (agentrouter.org) is an Anthropic-compatible router. When
+// AGENTROUTER_API_KEY is set it serves the rephrase first (funded by prepaid
+// credit); any failure, including the credit running out, throws so rephrase()
+// falls through to Gemini and buyers never see a break. The service gates on the
+// client User-Agent, so we send a CLI-style one (override with AGENTROUTER_UA).
+async function agentRouter(text) {
+  const base = (process.env.AGENTROUTER_BASE_URL || "https://agentrouter.org").replace(/\/$/, "");
+  const r = await fetch(`${base}/v1/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.AGENTROUTER_API_KEY}`,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      "User-Agent": process.env.AGENTROUTER_UA || "claude-cli/1.0.60 (external, cli)",
+    },
+    body: JSON.stringify({
+      model: process.env.AGENTROUTER_MODEL || "claude-opus-4-8",
+      max_tokens: 8000,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: text }],
+    }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((j && j.error && j.error.message) || `Agent Router HTTP ${r.status}`);
+  if (j.stop_reason === "max_tokens") throw new Error("truncated");  // fall back rather than type a cut-off rewrite
+  const out = (j.content || []).map((b) => b && b.text).filter(Boolean).join("");
+  if (!out.trim()) throw new Error("Agent Router returned nothing");
+  return out;
+}
+
+// Agent Router first (if configured), Gemini as the automatic fallback.
+async function rephrase(text) {
+  if (process.env.AGENTROUTER_API_KEY) {
+    try {
+      return await agentRouter(text);
+    } catch (e) {
+      if (!process.env.GEMINI_API_KEY) {
+        // No fallback configured: surface a friendly message, never a raw sentinel.
+        if (String((e && e.message) || "") === "truncated") {
+          throw new Error("The rephrase was cut off because the text is long. Try a shorter passage.");
+        }
+        throw new Error("The AI backend is unavailable right now. Try again, or add your own key in Settings.");
+      }
+      // Gemini is configured: swallow and fall through to it.
+    }
+  }
+  return await gemini(text);
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -99,7 +151,7 @@ module.exports = async (req, res) => {
       return;
     }
   }
-  if (!process.env.GEMINI_API_KEY) {
+  if (!process.env.GEMINI_API_KEY && !process.env.AGENTROUTER_API_KEY) {
     res.status(503).json({
       ok: false,
       error: "The free AI option is not available right now. Use your own Claude or Gemini key in Settings.",
@@ -161,7 +213,7 @@ module.exports = async (req, res) => {
       return;
     }
 
-    const out = await gemini(text + styleSuffix(body.style));
+    const out = await rephrase(text + styleSuffix(body.style));
     if (!out || !out.trim()) {
       res.status(502).json({ ok: false, error: "The AI returned nothing. Try again." });
       return;
