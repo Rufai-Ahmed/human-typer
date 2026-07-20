@@ -18,6 +18,7 @@ const crypto = require("crypto");
 const CAMPAIGN = "ai-upsell-2026-07";
 const SITE = "https://humantyper.rufaiahmed.com";
 const SENDER = () => process.env.MAIL_FROM || "Human Typer <keys@updates.rufaiahmed.com>";
+const LEGACY_SENDER = "Human Typer <keys@updates.humantyper.online>";  // fallback if the .com isn't verified in Resend
 const SUBJECT = "Add AI rewriting to Human Typer";
 
 const BASE = () => process.env.SUPABASE_URL.replace(/\/$/, "") + "/rest/v1";
@@ -102,11 +103,9 @@ function htmlBody(unsub) {
 </div>`;
 }
 
-// Returns {status, error}. status 0 = network error / timeout. 2xx = delivered
-// to Resend; 429 = definitively not sent (safe to retry); anything else is a
-// permanent reject or ambiguous (maybe already accepted) -> do NOT retry.
-async function sendOne(email) {
-  const unsub = unsubUrl(email);
+// One POST to Resend from a given sender. Returns {status, error}; status 0 =
+// network error / timeout.
+async function postResend(from, email, unsub) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 15000);
   try {
@@ -118,7 +117,7 @@ async function sendOne(email) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: SENDER(),
+        from,
         to: email,
         subject: SUBJECT,
         html: htmlBody(unsub),
@@ -134,10 +133,22 @@ async function sendOne(email) {
     try { error = (await r.text()).slice(0, 300); } catch {}
     return { status: r.status, error };
   } catch (e) {
-    return { status: 0, error: String((e && e.message) || e) };  // ambiguous, no-retry
+    return { status: 0, error: String((e && e.message) || e) };
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Send from the .com sender, falling back to the verified .online if the .com is
+// not verified in Resend (same discipline as claim.js). Returns {status, error};
+// 2xx = delivered to Resend; 429 = definitely not sent (retry); else no-retry.
+async function sendOne(email) {
+  const unsub = unsubUrl(email);
+  let r = await postResend(SENDER(), email, unsub);
+  if ((r.status < 200 || r.status >= 300) && SENDER() !== LEGACY_SENDER) {
+    r = await postResend(LEGACY_SENDER, email, unsub);
+  }
+  return r;
 }
 
 const mask = (e) => {
