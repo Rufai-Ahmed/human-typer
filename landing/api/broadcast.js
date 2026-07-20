@@ -2,9 +2,11 @@
 // yet, inviting them to the AI plans. Segmentation, opt-out exclusion, and the
 // send all run here so the Supabase/Resend keys stay in Vercel.
 //
-// Gated on BROADCAST_TOKEN (Bearer or ?token=). Two modes:
+// Gated on BROADCAST_TOKEN (Bearer or ?token=). Three modes:
 //   ?mode=count            -> dry run: audience size + a masked sample (no send)
-//   ?mode=send  (POST)     -> send up to `batch` (default 50) and mark them sent;
+//   ?mode=preview (POST)   -> send one copy of the email to {to} (owner preview,
+//                             no DB writes, does not touch the audience/log)
+//   ?mode=send  (POST)     -> send up to `batch` (default 20) and mark them sent;
 //                             idempotent (a per-campaign log skips anyone already
 //                             mailed), so call repeatedly to drain the list.
 //
@@ -234,7 +236,22 @@ module.exports = async (req, res) => {
       return;
     }
 
-    res.status(400).json({ ok: false, error: "Unknown mode. Use count or send." });
+    if (mode === "preview") {
+      if (req.method !== "POST") { res.status(405).json({ ok: false, error: "Use POST." }); return; }
+      let body = req.body;
+      if (typeof body === "string") { try { body = JSON.parse(body || "{}"); } catch { body = {}; } }
+      const to = String((body && body.to) || "").trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) {
+        res.status(400).json({ ok: false, error: "Provide a valid { to } address." });
+        return;
+      }
+      const status = await sendOne(to);  // no DB writes: a preview, not a campaign recipient
+      if (status >= 200 && status < 300) res.status(200).json({ ok: true, preview: to });
+      else res.status(502).json({ ok: false, error: `Resend status ${status}` });
+      return;
+    }
+
+    res.status(400).json({ ok: false, error: "Unknown mode. Use count, preview, or send." });
   } catch (err) {
     console.error("broadcast error:", err && err.message ? err.message : err);
     res.status(502).json({ ok: false, error: "Broadcast failed. Check the server logs." });
