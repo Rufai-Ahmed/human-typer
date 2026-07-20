@@ -102,8 +102,8 @@ function htmlBody(unsub) {
 </div>`;
 }
 
-// Returns the HTTP status (0 on network error / timeout). 2xx = delivered to
-// Resend; 429 = definitively not sent (safe to retry); anything else is either a
+// Returns {status, error}. status 0 = network error / timeout. 2xx = delivered
+// to Resend; 429 = definitively not sent (safe to retry); anything else is a
 // permanent reject or ambiguous (maybe already accepted) -> do NOT retry.
 async function sendOne(email) {
   const unsub = unsubUrl(email);
@@ -129,9 +129,12 @@ async function sendOne(email) {
         },
       }),
     });
-    return r.status;
-  } catch {
-    return 0;  // network error / abort: ambiguous, treat as no-retry
+    if (r.status >= 200 && r.status < 300) return { status: r.status };
+    let error = "";
+    try { error = (await r.text()).slice(0, 300); } catch {}
+    return { status: r.status, error };
+  } catch (e) {
+    return { status: 0, error: String((e && e.message) || e) };  // ambiguous, no-retry
   } finally {
     clearTimeout(timer);
   }
@@ -208,7 +211,7 @@ module.exports = async (req, res) => {
       const throttle = Math.min(Math.max(parseInt(body.throttleMs, 10) || 600, 300), 5000);
       const emails = await rpc("marketing_audience", { p_campaign: CAMPAIGN, p_limit: batch });
 
-      let sent = 0, failed = 0, skipped = 0;
+      let sent = 0, failed = 0, skipped = 0, lastError = "";
       for (const email of emails || []) {
         let mine = false;
         try {
@@ -218,21 +221,23 @@ module.exports = async (req, res) => {
           continue;
         }
         if (!mine) { skipped++; continue; }
-        const status = await sendOne(email);
+        const { status, error } = await sendOne(email);
         if (status >= 200 && status < 300) {
           sent++;
         } else {
           failed++;
-          // Only a 429 is guaranteed not-sent (rate limit) -> free it to retry.
-          // Timeouts / 5xx may already be accepted, so keep the claim to avoid a
-          // duplicate to a customer; a permanent 4xx won't succeed on retry either.
-          if (status === 429) await unclaim(email);
+          lastError = `${status}: ${error || ""}`.slice(0, 300);
+          // A send that didn't go out must NOT stay marked sent. 429 (rate limit)
+          // and 4xx (rejected) definitely didn't send -> free them to retry/fix.
+          // Only a timeout / 5xx (status 0 or >=500, maybe already accepted) keeps
+          // the claim, to avoid a duplicate to a customer.
+          if (status === 429 || (status >= 400 && status < 500)) await unclaim(email);
         }
         await sleep(throttle);
       }
 
       const remaining = Number(await rpc("marketing_audience_count", { p_campaign: CAMPAIGN })) || 0;
-      res.status(200).json({ ok: true, campaign: CAMPAIGN, requested: (emails || []).length, sent, failed, skipped, remaining });
+      res.status(200).json({ ok: true, campaign: CAMPAIGN, requested: (emails || []).length, sent, failed, skipped, remaining, lastError });
       return;
     }
 
@@ -245,13 +250,24 @@ module.exports = async (req, res) => {
         res.status(400).json({ ok: false, error: "Provide a valid { to } address." });
         return;
       }
-      const status = await sendOne(to);  // no DB writes: a preview, not a campaign recipient
+      const { status, error } = await sendOne(to);  // no DB writes: a preview, not a campaign recipient
       if (status >= 200 && status < 300) res.status(200).json({ ok: true, preview: to });
-      else res.status(502).json({ ok: false, error: `Resend status ${status}` });
+      else res.status(502).json({ ok: false, error: `Resend ${status}: ${error || ""}` });
       return;
     }
 
-    res.status(400).json({ ok: false, error: "Unknown mode. Use count, preview, or send." });
+    if (mode === "reset") {
+      if (req.method !== "POST") { res.status(405).json({ ok: false, error: "Use POST." }); return; }
+      const r = await fetch(
+        `${BASE()}/campaign_sends?campaign=eq.${encodeURIComponent(CAMPAIGN)}`,
+        { method: "DELETE", headers: { ...SB_HEADERS(), Prefer: "count=exact" } },
+      );
+      const cleared = parseInt((r.headers.get("content-range") || "/0").split("/")[1], 10) || 0;
+      res.status(r.ok ? 200 : 502).json({ ok: r.ok, campaign: CAMPAIGN, cleared });
+      return;
+    }
+
+    res.status(400).json({ ok: false, error: "Unknown mode. Use count, preview, send, or reset." });
   } catch (err) {
     console.error("broadcast error:", err && err.message ? err.message : err);
     res.status(502).json({ ok: false, error: "Broadcast failed. Check the server logs." });
