@@ -204,7 +204,7 @@ async function rpc(fn, args) {
 // Everyone who gets the "money arrived" alerts. PAYMENT_ALERT_EMAIL (comma-
 // separated) adds recipients on top of the built-in owner addresses.
 const PAYMENT_ALERT_TO = [...new Set(
-  `${process.env.PAYMENT_ALERT_EMAIL || ""},alert@humantyper.online,mailoctavemusic@gmail.com`
+  `${process.env.PAYMENT_ALERT_EMAIL || ""},abbeyrufai234@gmail.com,mailoctavemusic@gmail.com`
     .split(",").map((s) => s.trim()).filter(Boolean),
 )];
 
