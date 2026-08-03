@@ -1,29 +1,34 @@
-// Start a Flutterwave v4 Pay-With-Bank-Transfer payment.
+// Start a payment: Flutterwave in naira, or Bachs in USD for crypto buyers.
 //
-// The browser sends { email, plan: "lifetime"|"monthly", seats } and gets back
-// a one-time virtual account (bank + account number + exact amount + expiry).
-// The buyer transfers from their banking app; the page polls /api/claim with
-// the returned reference until the charge reads "succeeded" and the key ships.
+// The browser sends { email, plan: "lifetime"|"monthly", seats, method? }.
+// Without a method it gets the naira path — the Flutterwave hosted page, or a
+// one-time virtual account (bank + account number + exact amount + expiry) that
+// the buyer transfers to from their banking app. With method: "crypto" it gets a
+// Bachs hosted checkout priced in USD (crypto or USD card). Either way the page
+// polls /api/claim until the payment verifies and the key ships.
 //
-// Amounts are computed HERE from the same price table /api/claim grades with;
-// nothing the client sends can change what a plan costs. v4 amounts are in
-// naira (major units), while claim.js grades in kobo — keep both views in sync
-// through the same PRICE_KOBO / MONTHLY_KOBO envs.
+// Amounts are computed HERE from the same price tables /api/claim grades with;
+// nothing the client sends can change what a plan costs. Flutterwave v4 amounts
+// are in naira (major units) while claim.js grades in kobo — keep both views in
+// sync through the same PRICE_KOBO / MONTHLY_KOBO envs. The USD tables live in
+// _bachs.js and are shared by both files directly.
 
 const { flw, configured } = require("./_flw");
+const {
+  bachs,
+  configured: bachsConfigured,
+  usdCents,
+  usdTiers,
+  strictlyDescending,
+  decimal,
+  methods: bachsMethods,
+} = require("./_bachs");
 
 const VALID_SEATS = new Set([1, 5, 10, 25]);
 
 module.exports = async (req, res) => {
   if (req.method !== "POST") {
     res.status(405).json({ ok: false, error: "Method not allowed" });
-    return;
-  }
-  if (!configured() && !process.env.FLW_V3_SECRET_KEY) {
-    res.status(503).json({
-      ok: false,
-      error: "Payments are not configured yet (Flutterwave keys missing)",
-    });
     return;
   }
 
@@ -47,6 +52,89 @@ module.exports = async (req, res) => {
   const seats = teamPlan ? Number(body.seats) || 1 : 1;
   if (!VALID_SEATS.has(seats)) {
     res.status(400).json({ ok: false, error: "Invalid seat count" });
+    return;
+  }
+
+  // ^[a-zA-Z0-9-]+$, 6-42 chars, unique across all transactions. The HTX- prefix
+  // marks a Bachs (USD) order everywhere it shows up later: Supabase, the admin
+  // dashboard, owner alerts.
+  const mkRef = (prefix) =>
+    `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+  // ===== Crypto / USD: Bachs hosted checkout =====
+  const wantsCrypto = /^(crypto|bachs|usd)$/i.test(String(body.method || ""));
+  if (wantsCrypto) {
+    if (!bachsConfigured()) {
+      res.status(503).json({
+        ok: false,
+        error: "Crypto payments are not configured yet (Bachs key missing)",
+      });
+      return;
+    }
+    const amountCents = usdCents(plan, seats);
+    // Refuse to create a payment on a broken price config, the same way the
+    // naira path does: claim.js grades USD by floors too, so colliding tier
+    // totals would mis-grade a real payment.
+    if (!(amountCents > 0) || !strictlyDescending(usdTiers())) {
+      res.status(503).json({
+        ok: false,
+        error: "Crypto payments are temporarily unavailable.",
+      });
+      return;
+    }
+
+    const site = (process.env.SITE_URL || "https://www.humantyper.online").replace(/\/$/, "");
+    const reference = mkRef("HTX");
+    try {
+      // A product-less ("pure") checkout: the amount IS the price, so nothing
+      // has to be mirrored into a Bachs product catalog. Bachs appends
+      // ?checkout_id=… to success_url, so it must stay query- and fragment-free.
+      const s = await bachs("/v1/checkout-sessions", {
+        method: "POST",
+        headers: { "Idempotency-Key": reference },
+        body: JSON.stringify({
+          pricing: { currency: "USD", amount: decimal(amountCents) },
+          customer: { email },
+          reference,
+          // claim.js reads the amount back from Bachs, not from here; this is
+          // for the dashboard and the owner alert.
+          metadata: { email, plan, seats: String(seats) },
+          billing_currency: "USD",
+          allowed_payment_method_types: bachsMethods(),
+          success_url: `${site}/`,
+          cancel_url: `${site}/#pricing`,
+          expires_in_minutes: 60,
+        }),
+      });
+      if (!s || !s.checkout_url || !s.checkout_id) {
+        res.status(502).json({
+          ok: false,
+          error: "Bachs did not return a checkout link; try again shortly",
+        });
+        return;
+      }
+      res.status(200).json({
+        ok: true,
+        mode: "bachs",
+        reference,
+        checkout_id: s.checkout_id,
+        link: s.checkout_url,
+        amount: decimal(amountCents),
+        currency: "USD",
+        expires_at: s.expires_at || "",
+      });
+    } catch (err) {
+      res.status(502).json({ ok: false, error: String((err && err.message) || err) });
+    }
+    return;
+  }
+
+  // ===== Naira: Flutterwave =====
+  if (!configured() && !process.env.FLW_V3_SECRET_KEY) {
+    res.status(503).json({
+      ok: false,
+      error: "Payments are not configured yet (Flutterwave keys missing)",
+    });
     return;
   }
 
@@ -76,10 +164,7 @@ module.exports = async (req, res) => {
     return;
   }
 
-  // ^[a-zA-Z0-9-]+$, 6-42 chars, unique across all transactions.
-  const reference = `HT-${Date.now().toString(36)}-${Math.random()
-    .toString(36)
-    .slice(2, 10)}`;
+  const reference = mkRef("HT");
 
   try {
     // Preferred: Flutterwave Standard (v3) hosted checkout — the buyer picks

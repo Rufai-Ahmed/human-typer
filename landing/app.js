@@ -33,13 +33,17 @@ document.getElementById('year').textContent = new Date().getFullYear();
     tick();
 })();
 
-// --- Flutterwave checkout (pay by bank transfer): two cards (lifetime + monthly) ---
+// --- Checkout: Flutterwave in naira, Bachs in USD for crypto buyers ---
 (() => {
     // Per-seat prices for DISPLAY are defined per-card below; the server
     // (api/checkout.js) recomputes the real amount and api/claim.js grades it.
     const naira = (kobo) => '₦' + Math.round(kobo / 100).toLocaleString('en-NG');
     const nairaFromN = (n) => '₦' + Number(n).toLocaleString('en-NG');
+    const usd = (cents) => '$' + (cents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 });
     const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+    const isMonthlyPlan = (plan) => plan === 'monthly' || plan === 'ai_monthly';
+    const msgIdFor = (plan) => plan === 'monthly' ? 'buy-msg-monthly'
+        : plan === 'ai_monthly' ? 'buy-msg-ai-monthly' : 'buy-msg-ai-lifetime';
     // Umami funnel events; never let analytics break checkout.
     const track = (name, data) => { try { if (window.umami) window.umami.track(name, data); } catch (e) {} };
 
@@ -81,22 +85,39 @@ document.getElementById('year').textContent = new Date().getFullYear();
             + (n === 1 ? 'it' : 'each one') + ' into the app.';
     }
 
-    // Ask the server for a one-time bank account, show it, and poll until the
-    // transfer lands (Flutterwave marks the charge succeeded) or it expires.
-    function runCheckout({ email, plan, seats, showMsg, msgEl }) {
-        const isMonthly = plan === 'monthly';
+    // Start a payment. Crypto and the hosted Flutterwave page both redirect away
+    // and finish in the return handler at the bottom; the bank-transfer fallback
+    // shows account details here and polls until the transfer lands or expires.
+    function runCheckout({ email, plan, seats, method, showMsg, msgEl }) {
+        const isMonthly = isMonthlyPlan(plan);
         clearActiveRun();
-        showMsg('Preparing your payment details…', false);
+        showMsg(method === 'crypto'
+            ? 'Opening the crypto checkout…'
+            : 'Preparing your payment details…', false);
         fetch('/api/checkout', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, plan, seats }),
+            body: JSON.stringify({ email, plan, seats, method }),
         }).then((r) => r.json()).then((d) => {
             if (!d || !d.ok) {
                 showMsg((d && d.error) || 'Could not start the payment. Please try again.', true);
                 return;
             }
-            track('checkout-started', { plan, mode: d.mode === 'hosted' ? 'hosted' : 'transfer' });
+            track('checkout-started', {
+                plan,
+                mode: d.mode === 'bachs' ? 'crypto' : d.mode === 'hosted' ? 'hosted' : 'transfer',
+            });
+            if (d.mode === 'bachs' && d.link) {
+                // Bachs hosted checkout (crypto or USD card). It sends the buyer
+                // back here with ?checkout_id=… when done.
+                try {
+                    sessionStorage.setItem('ht-pending', JSON.stringify(
+                        { email, plan, seats, reference: d.reference, checkout_id: d.checkout_id }));
+                } catch (e) { /* private mode: return flow degrades gracefully */ }
+                showMsg('Taking you to the secure Bachs checkout to pay ' + d.amount + ' ' + d.currency + '…', false);
+                window.location.href = d.link;
+                return;
+            }
             if (d.mode === 'hosted' && d.link) {
                 // Flutterwave's hosted page (card / transfer / USSD); it sends
                 // the buyer back here with ?status=...&tx_ref=... when done.
@@ -190,8 +211,12 @@ document.getElementById('year').textContent = new Date().getFullYear();
         if (!btn) return;
         const msgEl = document.getElementById('buy-msg-ai-lifetime');
         const showMsg = makeShowMsg(msgEl);
+        const cryptoBtn = document.getElementById('btn-crypto-ai-lifetime');
+        const usdLabel = document.getElementById('usd-ai-lifetime');
         // Per-seat AI Lifetime price in kobo; MUST match PER_SEAT_AI_NAIRA in api/checkout.js.
         const PER_SEAT_AI_KOBO = { 1: 1500000, 5: 1200000, 10: 1050000, 25: 900000 };
+        // Per-seat AI Lifetime price in US cents; MUST match usdTables() in api/_bachs.js.
+        const PER_SEAT_AI_USD = { 1: 1900, 5: 1600, 10: 1400, 25: 1200 };
         let seats = 1;
 
         function refresh() {
@@ -203,6 +228,7 @@ document.getElementById('year').textContent = new Date().getFullYear();
             btn.textContent = seats === 1
                 ? 'Buy AI Lifetime for ' + naira(total)
                 : 'Buy ' + seats + ' AI seats for ' + naira(total);
+            if (usdLabel) usdLabel.textContent = usd(PER_SEAT_AI_USD[seats] * seats);
         }
 
         if (seatOptions) {
@@ -218,54 +244,64 @@ document.getElementById('year').textContent = new Date().getFullYear();
         }
         refresh();
 
-        btn.addEventListener('click', () => {
-            track('buy-clicked', { plan: 'ai_lifetime', seats });
+        const buy = (method) => {
+            track('buy-clicked', { plan: 'ai_lifetime', seats, method: method || 'naira' });
             const email = (emailInput.value || '').trim();
             if (!validEmail(email)) {
                 showMsg('Please enter a valid email. That is where your key is sent.', true);
                 emailInput.focus();
                 return;
             }
-            runCheckout({ email, plan: 'ai_lifetime', seats, showMsg, msgEl });
-        });
+            runCheckout({ email, plan: 'ai_lifetime', seats, method, showMsg, msgEl });
+        };
+        btn.addEventListener('click', () => buy(null));
+        if (cryptoBtn) cryptoBtn.addEventListener('click', () => buy('crypto'));
     })();
 
     // ---- AI Monthly + Monthly cards (single email + buy, no seats) ----
     [
-        { btn: 'btn-buy-ai-monthly', email: 'buyer-email-ai-monthly', msg: 'buy-msg-ai-monthly', plan: 'ai_monthly' },
-        { btn: 'btn-buy-monthly', email: 'buyer-email-monthly', msg: 'buy-msg-monthly', plan: 'monthly' },
+        { btn: 'btn-buy-ai-monthly', crypto: 'btn-crypto-ai-monthly', email: 'buyer-email-ai-monthly', msg: 'buy-msg-ai-monthly', plan: 'ai_monthly' },
+        { btn: 'btn-buy-monthly', crypto: 'btn-crypto-monthly', email: 'buyer-email-monthly', msg: 'buy-msg-monthly', plan: 'monthly' },
     ].forEach((c) => {
         const btn = document.getElementById(c.btn);
         const emailInput = document.getElementById(c.email);
         if (!btn) return;
         const msgEl = document.getElementById(c.msg);
         const showMsg = makeShowMsg(msgEl);
-        btn.addEventListener('click', () => {
-            track('buy-clicked', { plan: c.plan });
+        const buy = (method) => {
+            track('buy-clicked', { plan: c.plan, method: method || 'naira' });
             const email = (emailInput.value || '').trim();
             if (!validEmail(email)) {
                 showMsg('Please enter a valid email. That is where your key is sent.', true);
                 emailInput.focus();
                 return;
             }
-            runCheckout({ email, plan: c.plan, seats: 1, showMsg, msgEl });
-        });
+            runCheckout({ email, plan: c.plan, seats: 1, method, showMsg, msgEl });
+        };
+        btn.addEventListener('click', () => buy(null));
+        const cryptoBtn = document.getElementById(c.crypto);
+        if (cryptoBtn) cryptoBtn.addEventListener('click', () => buy('crypto'));
     });
 
-    // ---- Return from the hosted Flutterwave page (?status=...&tx_ref=...) ----
+    // ---- Return from a hosted checkout: Flutterwave (?status=…&tx_ref=…) or
+    //      Bachs (?checkout_id=…) ----
     (() => {
         const params = new URLSearchParams(window.location.search);
         const txRef = params.get('tx_ref');
-        if (!txRef) return;
+        const checkoutId = params.get('checkout_id');
+        if (!txRef && !checkoutId) return;
         const status = (params.get('status') || '').toLowerCase();
         history.replaceState(null, '', window.location.pathname + '#pricing');
 
         let ctx = {};
         try { ctx = JSON.parse(sessionStorage.getItem('ht-pending') || '{}'); } catch (e) {}
-        const isMonthly = ctx.plan === 'monthly';
+        const isMonthly = isMonthlyPlan(ctx.plan);
         const email = ctx.email || 'your email';
         const seats = ctx.seats || 1;
-        const msgEl = document.getElementById(isMonthly ? 'buy-msg-monthly' : 'buy-msg-lifetime');
+        // What to show in the "needs a manual touch" message: our own reference
+        // when we still have it, else whatever the provider sent us back with.
+        const ref = txRef || ctx.reference || checkoutId;
+        const msgEl = document.getElementById(msgIdFor(ctx.plan));
         const showMsg = makeShowMsg(msgEl);
         const pricing = document.getElementById('pricing');
         if (pricing) pricing.scrollIntoView();
@@ -278,14 +314,18 @@ document.getElementById('year').textContent = new Date().getFullYear();
             ? 'Payment received. Issuing your monthly pass…'
             : 'Payment received. Issuing your license key(s)…', false);
 
-        // Bank-transfer settles can lag the redirect a little: retry the claim.
+        // Bank transfers and on-chain confirmations can lag the redirect a
+        // little: retry the claim.
+        const claimBody = checkoutId
+            ? { checkout_id: checkoutId, reference: ctx.reference }
+            : { reference: txRef };
         let tries = 0;
         const attempt = () => {
             tries += 1;
             fetch('/api/claim', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ reference: txRef }),
+                body: JSON.stringify(claimBody),
             }).then((r) => r.json()).then((c) => {
                 if (c && c.ok && c.status === 'key_sent') {
                     try { sessionStorage.removeItem('ht-pending'); } catch (e) {}
@@ -296,12 +336,12 @@ document.getElementById('year').textContent = new Date().getFullYear();
                     showMsg('Your ' + (isMonthly ? 'monthly pass' : 'key') + ' was already emailed to '
                         + email + '. Check your inbox and spam folder.', false);
                 } else if (c && (c.status === 'out_of_keys' || c.status === 'unrecognized_amount')) {
-                    showMsg('Payment received (ref: ' + txRef + '). Your key needs a manual touch and will '
+                    showMsg('Payment received (ref: ' + ref + '). Your key needs a manual touch and will '
                         + 'be emailed shortly. Questions? me@rufaiahmed.com with that reference.', false);
                 } else if (tries < 8) {
                     setTimeout(attempt, 4000);
                 } else {
-                    showMsg('Payment is confirming (ref: ' + txRef + '). Your key is emailed the moment it '
+                    showMsg('Payment is confirming (ref: ' + ref + '). Your key is emailed the moment it '
                         + 'settles. If nothing arrives in a few minutes, email me@rufaiahmed.com with that reference.', false);
                 }
             }).catch(() => { if (tries < 8) setTimeout(attempt, 4000); });

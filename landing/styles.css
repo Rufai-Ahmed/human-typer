@@ -712,6 +712,16 @@ kbd{
 .price-email:focus{ border-color:var(--border-strong); }
 .price-email:focus-visible{ outline:var(--bw-thick) solid var(--ring); outline-offset:2px; }
 .price-buy{ width:100%; margin-top:var(--s-3); }
+/* Crypto / USD checkout (Bachs): the quieter second rail under each buy button. */
+.price-crypto{
+  width:100%;
+  margin-top:var(--s-2);
+  font-family:var(--font-mono);
+  font-size:var(--text-sm);
+  white-space:normal;
+  line-height:var(--lh-ui);
+}
+.price-crypto .usd{ color:var(--text); font-weight:var(--fw-semibold); }
 .buy-msg{
   margin-top:var(--s-4);
   font-family:var(--font-mono);

@@ -1,31 +1,41 @@
-// Auto-deliver license keys after a Flutterwave payment (Supabase-backed).
-// Handles both single (1 seat) and team/volume packs (5 / 10 / 25 seats).
+// Auto-deliver license keys after a payment (Supabase-backed): naira through
+// Flutterwave, USD/crypto through Bachs. Handles both single (1 seat) and
+// team/volume packs (5 / 10 / 25 seats).
 //
 // Triggered two ways (both safe and idempotent per payment reference):
-//   1. the browser polls it with { reference } while the buyer's bank
-//      transfer settles (see api/checkout.js)
-//   2. Flutterwave's charge.completed webhook POSTs { type, data: {...} } here
+//   1. the browser polls it with { reference } (Flutterwave) or
+//      { checkout_id } (Bachs) while the payment settles (see api/checkout.js)
+//   2. a provider webhook POSTs { type, data: {...} } here — Flutterwave's
+//      charge.completed, or Bachs' collection.succeeded / checkout.completed
 //
 // It never trusts the caller about success or quantity: it re-fetches the
-// charge from Flutterwave v4 (OAuth), derives plan and seat count from the
-// verified amount, then atomically claims unsold keys from Supabase and emails
-// them via Resend. Webhook signatures are NOT relied on for value: a forged
-// call can only trigger this server-side re-verification.
+// charge from the provider, derives plan and seat count from the verified
+// amount in its own currency, then atomically claims unsold keys from Supabase
+// and emails them via Resend. Webhook signatures are NOT relied on for value: a
+// forged call can only trigger this server-side re-verification.
 //
 // Old references from the Paystack era still verify through Paystack when
 // PAYSTACK_SECRET_KEY remains set, so past buyers can re-claim keys.
 //
 // Vercel env vars (set in the dashboard, never in code):
 //   FLW_CLIENT_ID, FLW_CLIENT_SECRET   Flutterwave v4 credentials
+//   BACHS_SECRET_KEY           sk_live_… / sk_sandbox_… (crypto + USD card)
 //   SUPABASE_URL               https://<project>.supabase.co
 //   SUPABASE_SERVICE_ROLE_KEY  (Supabase -> Project Settings -> API -> service_role; SECRET)
 //   RESEND_API_KEY             re_...
 // Optional: PAYSTACK_SECRET_KEY (legacy re-claims), MAIL_FROM, ADMIN_EMAIL,
-//           PRICE_KOBO (default 1000000), MONTHLY_KOBO, DOWNLOAD_URL, FLW_ENV
+//           PRICE_KOBO (default 1000000), MONTHLY_KOBO, DOWNLOAD_URL, FLW_ENV,
+//           USD_*_CENTS (see _bachs.js)
 
 const PAYSTACK = "https://api.paystack.co";
 const crypto = require("crypto");
 const { flw, configured: flwConfigured } = require("./_flw");
+const {
+  bachs,
+  configured: bachsConfigured,
+  usdTiers,
+  strictlyDescending,
+} = require("./_bachs");
 
 // Fetch a charge from Flutterwave v4 by our merchant reference (HT-...) or by
 // charge id (chg_..., what the webhook carries). Returns the charge object or
@@ -42,8 +52,51 @@ async function fetchFlwCharge(refOrId) {
   return arr.find((c) => c && c.reference === refOrId) || arr[0] || null;
 }
 
-// Normalize either provider's verdict to one shape claim logic can grade:
-// { ok, amountKobo, email, reference } — ok only for a REAL successful NGN
+// Bachs statuses that mean the money is ours. `accepted` is the processor's
+// "taken, final confirmation pending" state that collection.succeeded also
+// fires on; `underpaid` deliberately is NOT here.
+const BACHS_PAID = new Set(["succeeded", "accepted", "overpaid"]);
+
+// Verify a Bachs checkout by its id (the only handle Bachs gives us: there is
+// no lookup-by-merchant-reference endpoint).
+//
+// Grade on the session's own amount/currency, which is the merchant intent we
+// created — the USD sticker price. data.amount on the webhook, and
+// billing_currency here, are what the buyer's wallet actually sent (USDT, ETH,
+// a local-currency card), which is not a price we can grade.
+async function verifyBachs(checkoutId) {
+  let s = null;
+  try {
+    s = await bachs(`/v1/checkout-sessions/${encodeURIComponent(checkoutId)}`);
+  } catch (e) {
+    // No such checkout (forged call, or a sandbox id against a live key): a
+    // clean "nothing here", not a 500 the webhook would keep retrying.
+    if (e && (e.status === 404 || e.status === 400)) {
+      return { ok: false, currency: "USD", minor: 0, email: null, reference: `BX-${checkoutId}` };
+    }
+    throw e;
+  }
+  const charge = (s && s.charge) || {};
+  const statuses = [s && s.payment_status, charge.status].map((v) =>
+    String(v || "").toLowerCase(),
+  );
+  return {
+    ok: statuses.some((v) => BACHS_PAID.has(v)),
+    currency: String((s && s.currency) || "USD").toUpperCase(),
+    minor: Math.round((Number(s && s.amount) || 0) * 100),
+    email:
+      (s && s.customer && s.customer.email) ||
+      (s && s.metadata && s.metadata.email) ||
+      null,
+    // Our own HTX- reference is what both the poll and the webhook converge on,
+    // so the Supabase claim stays idempotent across the two.
+    reference: (s && s.reference) || `BX-${checkoutId}`,
+  };
+}
+
+// Normalize any provider's verdict to one shape claim logic can grade:
+// { ok, currency, minor, email, reference }, where `minor` is the smallest unit
+// of `currency` (kobo for NGN, cents for USD). ok only for a REAL successful
 // payment confirmed server-side with the provider.
 async function verifyPayment(reference) {
   // Flutterwave v3 (Standard hosted checkout) first — the live path.
@@ -63,7 +116,8 @@ async function verifyPayment(reference) {
       const naira = chargedN > 0 ? Math.min(amtN, chargedN) : amtN;
       return {
         ok: tx.status === "successful" && (tx.currency || "NGN") === "NGN",
-        amountKobo: Math.round(naira * 100),
+        currency: "NGN",
+        minor: Math.round(naira * 100),
         email:
           (tx.customer && tx.customer.email) ||
           (tx.meta && tx.meta.email) ||
@@ -86,13 +140,19 @@ async function verifyPayment(reference) {
           (c.currency || "NGN") === "NGN";
         // v4 amounts are naira decimals and fees live in a separate array, so
         // amount is the charge amount itself; convert to kobo for grading.
-        const amountKobo = Math.round((Number(c.amount) || 0) * 100);
+        const minor = Math.round((Number(c.amount) || 0) * 100);
         const email =
           (c.customer && c.customer.email) ||
           (c.meta && (c.meta.email || c.meta.Email)) ||
           (c.billing_details && c.billing_details.email) ||
           null;
-        return { ok, amountKobo, email, reference: c.reference || reference };
+        return {
+          ok,
+          currency: "NGN",
+          minor,
+          email,
+          reference: c.reference || reference,
+        };
       }
     } catch (e) {
       // A 404 means "not a Flutterwave charge" (fall through to legacy);
@@ -114,7 +174,7 @@ async function verifyPayment(reference) {
       // requested_amount keeps the initialized price; grade on the smaller.
       const paidKobo = Number(tx.amount) || 0;
       const requestedKobo = Number(tx.requested_amount) || 0;
-      const amountKobo =
+      const minor =
         requestedKobo > 0 ? Math.min(paidKobo, requestedKobo) : paidKobo;
       const ok =
         Boolean(v.status) &&
@@ -122,14 +182,15 @@ async function verifyPayment(reference) {
         (tx.currency || "NGN") === "NGN";
       return {
         ok,
-        amountKobo,
+        currency: "NGN",
+        minor,
         email: (tx.customer && tx.customer.email) || null,
         reference,
       };
     }
   }
 
-  return { ok: false, amountKobo: 0, email: null, reference };
+  return { ok: false, currency: "NGN", minor: 0, email: null, reference };
 }
 
 // --- Key pool auto top-up ---------------------------------------------------
@@ -279,8 +340,18 @@ function keysEmailHtml(keys, downloadUrl, hasAI) {
     </div>`;
 }
 
-function nairaFromKobo(kobo) {
-  return "NGN " + (Math.round(Number(kobo) || 0) / 100).toLocaleString("en-US");
+// "NGN 15,000" / "USD 19.00" from the currency's smallest unit.
+function fmtMoney(minor, currency) {
+  const cur = String(currency || "NGN").toUpperCase();
+  const major = Math.round(Number(minor) || 0) / 100;
+  return (
+    cur +
+    " " +
+    major.toLocaleString("en-US", {
+      minimumFractionDigits: cur === "NGN" ? 0 : 2,
+      maximumFractionDigits: 2,
+    })
+  );
 }
 
 function fmtDate(iso) {
@@ -317,11 +388,11 @@ function monthlyEmailHtml(key, expiresAt, downloadUrl, hasAI) {
     </div>`;
 }
 
-function paymentAlertHtml({ email, amountKobo, reference, planLine }) {
+function paymentAlertHtml({ email, amountText, reference, planLine }) {
   return `
     <div style="font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:520px;margin:0 auto;color:#111">
       <h2 style="margin:0 0 10px">New Human Typer payment</h2>
-      <p style="margin:4px 0"><strong>Amount:</strong> ${nairaFromKobo(amountKobo)}</p>
+      <p style="margin:4px 0"><strong>Amount:</strong> ${amountText}</p>
       <p style="margin:4px 0"><strong>Email:</strong> ${email}</p>
       <p style="margin:4px 0"><strong>Plan:</strong> ${planLine}</p>
       <p style="margin:10px 0 0;color:#666;font-size:13px"><strong>Reference:</strong> ${reference}</p>
@@ -342,11 +413,12 @@ module.exports = async (req, res) => {
   if (
     !process.env.FLW_V3_SECRET_KEY &&
     !flwConfigured() &&
-    !process.env.PAYSTACK_SECRET_KEY
+    !process.env.PAYSTACK_SECRET_KEY &&
+    !bachsConfigured()
   ) {
     res.status(500).json({
       ok: false,
-      error: "Server not configured: Flutterwave keys missing",
+      error: "Server not configured: no payment provider keys",
     });
     return;
   }
@@ -358,13 +430,27 @@ module.exports = async (req, res) => {
     body = {};
   }
   body = body || {};
+  // Bachs first, because its events also carry data.reference (our HTX- ref) and
+  // only the checkout id can actually be looked up. The browser poll sends
+  // { checkout_id }; collection.* / checkout.* events carry data.checkout_id.
+  // An event without one (charge-only, e.g. a test webhook) falls through to the
+  // reference path and is picked up by the browser poll instead.
+  const checkoutId =
+    body.checkout_id || (body.data && body.data.checkout_id) || null;
   // Browser polls send { reference }. Flutterwave webhooks carry data.tx_ref
   // (v3 Standard) or data.reference / data.id (v4 charge.completed).
   const reference =
     body.reference ||
     (body.data && (body.data.tx_ref || body.data.reference || body.data.id));
-  if (!reference) {
+  if (!checkoutId && !reference) {
     res.status(400).json({ ok: false, error: "Missing payment reference" });
+    return;
+  }
+  if (checkoutId && !bachsConfigured()) {
+    res.status(500).json({
+      ok: false,
+      error: "Server not configured: BACHS_SECRET_KEY",
+    });
     return;
   }
 
@@ -381,43 +467,49 @@ module.exports = async (req, res) => {
   // total they actually covered. Because we grade on min(paid, requested) the
   // amount is the exact sticker price, so these floors never collide across the
   // four plans + lifetime team packs. Sorted desc so env overrides can't misorder.
-  const TIERS = [
-    { plan: "ai_lifetime", seats: 25, kobo: 22500000 }, // ₦9,000/seat + AI
-    { plan: "lifetime", seats: 25, kobo: 15000000 }, // ₦6,000/seat (legacy team)
-    { plan: "ai_lifetime", seats: 10, kobo: 10500000 }, // ₦10,500/seat + AI
-    { plan: "lifetime", seats: 10, kobo: 7000000 }, // ₦7,000/seat (legacy team)
-    { plan: "ai_lifetime", seats: 5, kobo: 6000000 }, // ₦12,000/seat + AI
-    { plan: "lifetime", seats: 5, kobo: 4000000 }, // ₦8,000/seat (legacy team)
-    { plan: "ai_lifetime", seats: 1, kobo: aiLifetimeKobo }, // ₦15,000 + AI
-    { plan: "lifetime", seats: 1, kobo: priceKobo }, // ₦10,000 single (legacy)
-    { plan: "ai_monthly", seats: 1, kobo: aiMonthlyKobo }, // ₦5,000 + AI
-    { plan: "monthly", seats: 1, kobo: monthlyKobo }, // ₦2,000
-  ].sort((a, b) => b.kobo - a.kobo);
-  // Floor grading is only correct if every tier floor (the four env prices AND
-  // the hardcoded team-pack totals) is strictly distinct and descending. A bad
-  // env value could otherwise collide with a pack total and mis-grade a payment
-  // to the wrong plan. Refuse to fulfill on any misconfig rather than risk it.
-  for (let i = 1; i < TIERS.length; i++) {
-    if (TIERS[i].kobo >= TIERS[i - 1].kobo) {
-      res.status(500).json({
-        ok: false,
-        error: "Server misconfigured: plan/pack prices must be strictly distinct and ordered",
-      });
-      return;
+  // One table per currency: naira in kobo (Flutterwave/Paystack), USD in cents
+  // (Bachs). A dollar total must never be graded against a naira floor.
+  const TIERS = {
+    NGN: [
+      { plan: "ai_lifetime", seats: 25, minor: 22500000 }, // ₦9,000/seat + AI
+      { plan: "lifetime", seats: 25, minor: 15000000 }, // ₦6,000/seat (legacy team)
+      { plan: "ai_lifetime", seats: 10, minor: 10500000 }, // ₦10,500/seat + AI
+      { plan: "lifetime", seats: 10, minor: 7000000 }, // ₦7,000/seat (legacy team)
+      { plan: "ai_lifetime", seats: 5, minor: 6000000 }, // ₦12,000/seat + AI
+      { plan: "lifetime", seats: 5, minor: 4000000 }, // ₦8,000/seat (legacy team)
+      { plan: "ai_lifetime", seats: 1, minor: aiLifetimeKobo }, // ₦15,000 + AI
+      { plan: "lifetime", seats: 1, minor: priceKobo }, // ₦10,000 single (legacy)
+      { plan: "ai_monthly", seats: 1, minor: aiMonthlyKobo }, // ₦5,000 + AI
+      { plan: "monthly", seats: 1, minor: monthlyKobo }, // ₦2,000
+    ].sort((a, b) => b.minor - a.minor),
+    USD: usdTiers(),
+  };
+  // Floor grading is only correct if every tier floor (the env prices AND the
+  // hardcoded pack totals) is strictly distinct and descending. A bad env value
+  // could otherwise collide with a pack total and mis-grade a payment to the
+  // wrong plan. Refuse to fulfill on any misconfig rather than risk it — but
+  // only for the currency that is actually broken.
+  const gradeFor = (minor, currency) => {
+    const tiers = TIERS[currency];
+    if (!tiers) return null; // a currency we don't price in: manual review
+    if (!strictlyDescending(tiers)) {
+      throw new Error(
+        `Server misconfigured: ${currency} plan/pack prices must be strictly distinct and ordered`,
+      );
     }
-  }
-  const gradeFor = (amountKobo) => {
-    for (const t of TIERS) if (amountKobo >= t.kobo) return t;
+    for (const t of tiers) if (minor >= t.minor) return t;
     return null;
   };
 
   try {
-    // Source of truth: re-fetch the payment from the provider (Flutterwave v4,
-    // falling back to Paystack for legacy references).
-    const verified = await verifyPayment(String(reference));
-    const paidKobo = verified.amountKobo;
-    const amount = paidKobo;
-    const graded = verified.ok ? gradeFor(amount) : null;
+    // Source of truth: re-fetch the payment from the provider (Bachs by checkout
+    // id, else Flutterwave, falling back to Paystack for legacy references).
+    const verified = checkoutId
+      ? await verifyBachs(String(checkoutId))
+      : await verifyPayment(String(reference));
+    const paidMinor = verified.minor;
+    const paidText = fmtMoney(paidMinor, verified.currency);
+    const graded = verified.ok ? gradeFor(paidMinor, verified.currency) : null;
     const plan = graded && graded.plan; // monthly | ai_monthly | lifetime | ai_lifetime
     const hasAI = plan === "ai_monthly" || plan === "ai_lifetime";
     const isMonthlyLike = plan === "monthly" || plan === "ai_monthly";
@@ -434,10 +526,10 @@ module.exports = async (req, res) => {
       try {
         await sendEmail(
           PAYMENT_ALERT_TO,
-          `Human Typer payment needs manual review: ${nairaFromKobo(paidKobo)}`,
+          `Human Typer payment needs manual review: ${paidText}`,
           paymentAlertHtml({
             email: verified.email || "unknown",
-            amountKobo: paidKobo,
+            amountText: paidText,
             reference: verified.reference,
             planLine: "No plan matched this amount; issue the key manually",
           }),
@@ -458,8 +550,8 @@ module.exports = async (req, res) => {
       try {
         await sendEmail(
           PAYMENT_ALERT_TO,
-          `New Human Typer payment: ${nairaFromKobo(paidKobo)} from ${email}`,
-          paymentAlertHtml({ email, amountKobo: paidKobo, reference: verified.reference, planLine }),
+          `New Human Typer payment: ${paidText} from ${email}`,
+          paymentAlertHtml({ email, amountText: paidText, reference: verified.reference, planLine }),
         );
       } catch (_) {}
     };

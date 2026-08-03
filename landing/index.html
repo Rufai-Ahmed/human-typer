@@ -93,6 +93,11 @@
         },
         {
           "@type": "Question",
+          "name": "I'm outside Nigeria, or I'd rather pay in crypto.",
+          "acceptedAnswer": { "@type": "Answer", "text": "Every plan has a crypto option priced in US dollars, right under its Buy button. It opens a Bachs checkout that takes USDT (Tron, BNB Chain or Ethereum), USDC, ETH, SOL, BNB, or a card in USD. Same delivery: your key is emailed as soon as the payment confirms." }
+        },
+        {
+          "@type": "Question",
           "name": "What exactly does it do?",
           "acceptedAnswer": { "@type": "Answer", "text": "It types text you give it into whatever app is focused, using real keyboard events with human-like timing. Think of it as auto typing software with a human touch: a tireless typist, not a robotic typing bot." }
         },
@@ -310,6 +315,7 @@
                     <div class="price-actions">
                         <input id="buyer-email-ai-monthly" type="email" class="price-email" placeholder="your@email.com (where we send your key)" autocomplete="email" inputmode="email">
                         <button id="btn-buy-ai-monthly" class="btn btn-primary btn-lg price-buy">Get AI for ₦5,000/month</button>
+                        <button id="btn-crypto-ai-monthly" type="button" class="btn btn-ghost price-crypto">Outside Nigeria? Pay in crypto: <span class="usd">$7</span></button>
                         <p id="buy-msg-ai-monthly" class="buy-msg hidden"></p>
                     </div>
                 </div>
@@ -358,6 +364,7 @@
                     <div class="price-actions">
                         <input id="buyer-email-ai-lifetime" type="email" class="price-email" placeholder="your@email.com (where we send your key)" autocomplete="email" inputmode="email">
                         <button id="btn-buy-ai-lifetime" class="btn btn-primary btn-lg price-buy">Buy AI Lifetime for ₦15,000</button>
+                        <button id="btn-crypto-ai-lifetime" type="button" class="btn btn-ghost price-crypto">Outside Nigeria? Pay in crypto: <span id="usd-ai-lifetime" class="usd">$19</span></button>
                         <p id="buy-msg-ai-lifetime" class="buy-msg hidden"></p>
                     </div>
                 </div>
@@ -377,11 +384,12 @@
                     <div class="price-actions">
                         <input id="buyer-email-monthly" type="email" class="price-email" placeholder="your@email.com (where we send your key)" autocomplete="email" inputmode="email">
                         <button id="btn-buy-monthly" class="btn btn-primary btn-lg price-buy">Get 30 days for ₦2,000</button>
+                        <button id="btn-crypto-monthly" type="button" class="btn btn-ghost price-crypto">Outside Nigeria? Pay in crypto: <span class="usd">$3</span></button>
                         <p id="buy-msg-monthly" class="buy-msg hidden"></p>
                     </div>
                 </div>
             </div>
-            <p class="price-foot">Secure checkout by Flutterwave: card or instant bank transfer. Your key is emailed the moment payment lands, then you download below.</p>
+            <p class="price-foot">Secure checkout by Flutterwave: card or instant bank transfer. Paying from outside Nigeria, or in crypto? Use the crypto option on any plan: USDT, USDC, ETH, SOL or BNB in USD, handled by Bachs. Your key is emailed the moment payment lands, then you download below.</p>
         </section>
 
         <!-- Download -->
@@ -430,6 +438,10 @@
                 <details>
                     <summary>How do I get my license key?</summary>
                     <p>Tap Buy and pay on Flutterwave's secure page, by card or instant bank transfer. Your key is emailed to the address you entered the moment payment lands. Download the app, open it, and paste the key once to activate it on that machine.</p>
+                </details>
+                <details class="faq-item">
+                    <summary>I'm outside Nigeria, or I'd rather pay in crypto.</summary>
+                    <p>Every plan has a crypto option priced in US dollars, right under its Buy button. It opens a Bachs checkout that takes USDT (Tron, BNB Chain or Ethereum), USDC, ETH, SOL, BNB, or a card in USD. Same delivery: your key is emailed as soon as the payment confirms.</p>
                 </details>
                 <details>
                     <summary>What exactly does it do?</summary>

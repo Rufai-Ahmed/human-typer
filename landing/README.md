@@ -45,12 +45,53 @@ Add environment variables:
 | `RESEND_API_KEY` | `re_…` |
 | `MAIL_FROM` *(optional)* | `Human Typer <keys@updates.rufaiahmed.com>` |
 | `ADMIN_EMAIL` *(optional)* | `me@rufaiahmed.com` (alerted if keys run out) |
+| `BACHS_SECRET_KEY` *(optional)* | `sk_live_…` / `sk_sandbox_…` (turns on the crypto/USD option) |
 
 Then **Settings → Domains → Add** `humantyper.rufaiahmed.com`.
 
 **5. Paystack webhook** — Dashboard → Settings → Webhooks → URL =
 `https://humantyper.rufaiahmed.com/api/claim`. (The page already uses your
 **public** key for checkout; the secret key stays server-side.)
+
+## Crypto / outside Nigeria (Bachs)
+
+Every plan carries a second, USD-priced button that opens a [Bachs](https://docs.bachs.io)
+hosted checkout: USDT (TRC-20/BEP-20/ERC-20), USDC, ETH, SOL, BNB, or a USD card.
+It is off until `BACHS_SECRET_KEY` exists, and the naira path is untouched either way.
+
+Setup:
+1. Bachs dashboard → Developer → **create a secret key** with the `payments:read`
+   and `payments:write` scopes. `sk_sandbox_…` routes to the sandbox and
+   `sk_live_…` to production, so going live is a key swap, nothing else.
+2. Add it to Vercel as `BACHS_SECRET_KEY`.
+3. Developer Portal → Webhooks → **Add destination** =
+   `https://www.humantyper.online/api/claim`, subscribed to at least
+   `collection.succeeded`.
+
+| Optional env | Default | What it does |
+|---|---|---|
+| `USD_AI_LIFETIME_CENTS` | `1900` | AI Lifetime, 1 seat ($19). 5/10/25 seats are $16/$14/$12 per seat in `api/_bachs.js` |
+| `USD_LIFETIME_CENTS` | `1200` | legacy no-AI lifetime |
+| `USD_AI_MONTHLY_CENTS` | `700` | AI monthly pass |
+| `USD_MONTHLY_CENTS` | `300` | monthly pass |
+| `BACHS_METHODS` | `crypto,card` | rails to offer. Set to `crypto` for crypto only |
+| `SITE_URL` | `https://www.humantyper.online` | where Bachs sends the buyer back |
+
+The USD prices are their own sticker prices, not an FX conversion of the naira
+ones; change them in env without a deploy. Two rules they must keep:
+`allowed_payment_method_types` stays USD-only (`bank_transfer`/`mobile_money`
+would convert the dollar price into the buyer's local currency, so a Nigerian
+buyer would pay the dollar price instead of the cheaper naira one), and every
+tier total must stay strictly distinct and descending or `/api/claim` refuses to
+fulfil. `api/_bachs.js` holds both tables; the front end mirrors the AI-lifetime
+per-seat prices for display only.
+
+**How it verifies:** the browser polls `/api/claim` with the `checkout_id`, and
+Bachs' `collection.succeeded` webhook hits the same endpoint. Either way claim.js
+re-fetches the checkout session from Bachs and grades the **session's own USD
+amount**, never the webhook payload, whose `amount` is what the buyer's wallet
+actually sent (USDT, ETH, a local-currency card). Both paths claim keys against
+our own `HTX-…` reference, so they are idempotent against each other.
 
 ## How it works
 
