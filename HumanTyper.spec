@@ -122,8 +122,8 @@ else:
             info_plist={
                 'CFBundleName': 'Human Typer',
                 'CFBundleDisplayName': 'Human Typer',
-                'CFBundleShortVersionString': '1.8.0',
-                'CFBundleVersion': '1.8.0',
+                'CFBundleShortVersionString': '1.8.1',
+                'CFBundleVersion': '1.8.1',
                 'NSHighResolutionCapable': True,
                 'LSMinimumSystemVersion': '10.13.0',
                 'NSHumanReadableCopyright': '© Human Typer',

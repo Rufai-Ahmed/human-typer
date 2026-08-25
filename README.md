@@ -17,7 +17,7 @@ Works on **macOS** and **Windows** from one codebase.
 | **Humanize** | Variable Gaussian timing, **bigram flight-time** (distant keys take longer, hand-alternation is faster), pauses after spaces/punctuation, and occasional hesitations. Toggle off for constant-speed typing. |
 | **Typo & correction** | Optional: occasionally fat-fingers a nearby key, then backspaces and fixes it. |
 | **Global Esc stop** | Press **Esc** to abort instantly — even when another app has focus. |
-| **Countdown** | A 1–10 s countdown (default 5 s) to switch to your target window first. |
+| **Countdown** | A 1–30 s countdown (default 5 s) to switch to your target window first. |
 
 ## How to use (the app)
 
