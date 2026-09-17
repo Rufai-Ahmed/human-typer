@@ -55,10 +55,10 @@ for _std_name, _std_mode in (("stdin", "r"), ("stdout", "w"), ("stderr", "w")):
 # pynput drives keystrokes on Windows/Linux and the global Esc listener everywhere.
 HAS_PYNPUT = False
 try:
-    from pynput.keyboard import Controller, Key, Listener
+    from pynput.keyboard import Controller, Key, KeyCode, Listener
     HAS_PYNPUT = True
 except ImportError:
-    Controller, Key, Listener = None, None, None
+    Controller, Key, KeyCode, Listener = None, None, None, None
 
 import ctypes
 import ctypes.util
@@ -84,6 +84,13 @@ if IS_MAC:
 
         cg.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
         cg.CGEventPost.restype = None
+
+        # A new event inherits whatever modifiers are physically held, so a run
+        # that starts while Cmd is down would send Cmd+A / Cmd+S, not characters.
+        cg.CGEventSetFlags.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+        cg.CGEventSetFlags.restype = None
+        cg.CGEventGetFlags.argtypes = [ctypes.c_void_p]
+        cg.CGEventGetFlags.restype = ctypes.c_uint64
 
         cf.CFRelease.argtypes = [ctypes.c_void_p]
         cf.CFRelease.restype = None
@@ -226,6 +233,8 @@ class TypingProfile:
     hesitation: float = 0.7       # mean length of a thinking pause (seconds)
     typo_prob: float = 0.0        # chance of a typo+correction per alpha char
     pauses: bool = True           # toggle word/sentence/hesitation pauses
+    soft_newline: bool = False    # "\n" as Shift+Return, so a hijacked paste can
+                                  # never SEND a half-written chat message
 
     @property
     def mean_delay(self) -> float:
@@ -442,11 +451,90 @@ def _focus_watcher() -> None:
             time.sleep(0.3)
 
 
-# --- Quick-type hotkey + clipboard watch -----------------------------------
+# --- Quick-type hotkey, paste hijack, clipboard watch ----------------------
 hotkey_enabled = False
 clipwatch_enabled = False
+paste_hijack_enabled = False    # Cmd/Ctrl+V types the clipboard instead of pasting
 _hotkey_listener = None
 _last_clip = None
+_hotkey_profile = {}            # the settings the GUI last pushed (see /api/quicktype)
+_MY_PID = os.getpid()
+MAX_HIJACK_CHARS = 5000         # above this, hand the real paste back
+
+_paste_signal = threading.Event()   # interceptor -> worker; set() is idempotent, so
+_paste_worker_th = None             # key repeat cannot queue runs up
+_mod_flags = [0]        # last CGEventFlags seen, for the Cmd-release wait
+_v_swallowed = [False]  # we ate a V keydown, so its keyup must go too
+_js_focus = [False, 0.0]        # GUI-reported focus + monotonic stamp (browser mode)
+_gui_hwnd = [0]                 # Windows: foreground hwnd when the page had focus
+_native_ui = [False]            # True once our own pywebview window is up
+_paste_tap_cbs = []             # own keep-alive list: sharing _event_tap_cb would GC
+                                # the panic tap's trampoline, and REBINDING a single
+                                # slot would free one that a live tap still calls
+_paste_tap_port = [None]
+_paste_tap_th = None
+_paste_arm_lock = threading.Lock()   # the HTTP thread and the menu bar both arm
+_paste_armed = [False]  # intent, owned by _set_paste_hijack: disabling a tap makes
+                        # the system notify the callback, which must not re-arm it
+_paste_tap_ready = threading.Event()
+_paste_timeouts = [0]
+_win_u32 = None
+paste_hijack_available = True   # False when this pynput ignored our event filter
+
+_HOTKEY_LIMITS = {      # these arrive over localhost HTTP, so clamp every knob
+    "delay_ms": (2.0, 400.0), "variance": (0.0, 0.6), "word_pause": (0.0, 2.0),
+    "sentence_pause": (0.0, 5.0), "hesitation_prob": (0.0, 0.2),
+    "hesitation": (0.0, 5.0), "typos": (0.0, 0.25),
+}
+
+
+def _paste_hijack_supported() -> bool:
+    if IS_MAC:
+        return HAS_COREGRAPHICS
+    return sys.platform.startswith("win") and HAS_PYNPUT and paste_hijack_available
+
+
+def _js_focus_fresh() -> bool:
+    """True when the GUI page recently reported keyboard focus.
+
+    Only consulted in browser / Edge-app mode, where the frontmost process is the
+    browser rather than us. Expires so a missed blur cannot latch the feature off
+    (the page re-reports document.hasFocus() on its 45s heartbeat).
+    """
+    return bool(_js_focus[0]) and (time.monotonic() - _js_focus[1]) < 120.0
+
+
+def _hotkey_typing_profile(soft_newline: bool = False) -> TypingProfile:
+    """The GUI's current settings, for hotkey / paste / clipboard runs.
+
+    Falls back field by field so a partial payload still yields a sane profile,
+    and clamps every knob: keystroke_delay() survives a NaN, but an unclamped one
+    would stall the run at HARD_CAP per key with nothing to explain it.
+    """
+    src = _hotkey_profile or {}
+    d = TypingProfile()
+
+    def num(key, default):
+        lo, hi = _HOTKEY_LIMITS[key]
+        try:
+            v = float(src.get(key, default))
+        except (TypeError, ValueError):
+            return default
+        return default if not math.isfinite(v) else _clamp(v, lo, hi)
+
+    humanize = bool(src.get("humanize", d.humanize))
+    return TypingProfile(
+        delay_ms=num("delay_ms", d.delay_ms),
+        humanize=humanize,
+        variance=num("variance", d.variance) if humanize else 0.0,
+        word_pause=num("word_pause", d.word_pause),
+        sentence_pause=num("sentence_pause", d.sentence_pause),
+        hesitation_prob=num("hesitation_prob", d.hesitation_prob),
+        hesitation=num("hesitation", d.hesitation),
+        typo_prob=num("typos", d.typo_prob) if humanize else 0.0,
+        pauses=humanize,
+        soft_newline=soft_newline,
+    )
 
 
 def _chord_down() -> bool:
@@ -468,7 +556,7 @@ def _chord_down() -> bool:
     return False
 
 
-def _fire_quick_type() -> None:
+def _fire_quick_type(countdown: float = 1.0) -> None:
     """Type the clipboard into the focused field, no window raise, 1s lead-in."""
     if not is_activated() or not accessibility_ok():
         return
@@ -487,7 +575,9 @@ def _fire_quick_type() -> None:
         typing_status.focus_guard = False   # quick-type goes wherever you already are
         typing_status.run_id += 1
         try:
-            threading.Thread(target=_typing_thread, args=(text, TypingProfile(), 1.0), daemon=True).start()
+            threading.Thread(target=_typing_thread,
+                             args=(text, _hotkey_typing_profile(), countdown),
+                             daemon=True).start()
         except Exception:
             typing_status.state = "idle"
 
@@ -497,8 +587,13 @@ def _hotkey_watcher() -> None:
     armed = True
     tick = 0
     while True:
-        if typing_status.state == "idle" and (hotkey_enabled or clipwatch_enabled):
-            if hotkey_enabled and not IS_MAC:   # macOS handles the chord via the CGEventTap
+        # "done" and "aborted" are terminal states that are never reset to "idle",
+        # so gating on == "idle" made the chord and the watch work exactly once
+        # per session.
+        busy = typing_status.state in ("countdown", "typing", "paused")
+        chord_polling = hotkey_enabled and not IS_MAC   # macOS uses the CGEventTap
+        if not busy and (hotkey_enabled or clipwatch_enabled):
+            if chord_polling:
                 if _chord_down():
                     if armed:
                         armed = False
@@ -572,7 +667,8 @@ def _macos_event_tap() -> None:
                 if active and (kc == _ESC_KEYCODE or (kc == PERIOD and cmd)):
                     typing_status.cancel_event.set()
                 elif kc == H_KC and cmd and (flags & FLAG_SHIFT) and hotkey_enabled:
-                    _fire_quick_type()
+                    # Off the tap thread: _fire_quick_type forks ioreg and pbpaste.
+                    threading.Thread(target=_fire_quick_type, daemon=True).start()
             elif etype in DISABLED and _event_tap_port[0]:
                 cg.CGEventTapEnable(_event_tap_port[0], True)   # system disabled us → re-arm
         except Exception:
@@ -597,19 +693,392 @@ def _macos_event_tap() -> None:
         time.sleep(2.0)         # no Accessibility yet (or tap died) — retry until granted
 
 
+# --- Paste hijack: Cmd/Ctrl+V types the clipboard instead of pasting -------
+_V_KC = 9                       # kVK_ANSI_V (a keycode, not the field id 9)
+_FLAG_CMD = 0x100000
+_FLAG_BLOCK = 0x20000 | 0x80000 | 0x40000 | 0x800000    # Shift | Opt | Ctrl | Fn
+_FLAG_MODS = _FLAG_CMD | 0x20000 | 0x80000 | 0x40000
+
+
+def _hijack_decision(flags: int, src_pid: int, tgt_pid: int) -> bool:
+    """Suppress this Cmd+V and type the clipboard instead?
+
+    Pure, so the whole truth table is testable without a keyboard. Every early
+    return is False, which means the real paste happens.
+
+    What the clipboard actually holds is deliberately NOT consulted here. Reading
+    it costs a subprocess, and a cached answer is stale for as long as it takes to
+    copy something and paste it, which is under a second: the hijack would then
+    silently do nothing. Instead the worker reads it for real and replays the
+    paste when it turns out to be an image, empty, or over the cap.
+    """
+    if not (flags & _FLAG_CMD) or (flags & _FLAG_BLOCK):
+        return False            # Cmd+Shift+V and friends always paste for real
+    if src_pid == _MY_PID:
+        return False            # our own replay: passing it through IS the paste
+    if not paste_hijack_enabled:
+        return False
+    if typing_status.state in ("countdown", "typing", "paused"):
+        return False            # busy: a real paste beats a silent no-op
+    if tgt_pid == _MY_PID:
+        return False            # our own window must still paste normally
+    if not _native_ui[0] and _js_focus_fresh():
+        return False            # browser mode: the target pid is the browser's
+    return True
+
+
+def _macos_paste_tap() -> None:
+    """An ACTIVE CGEventTap that suppresses Cmd+V.
+
+    Deliberately separate from the panic-stop tap: a suppressing tap can be torn
+    out by kCGEventTapDisabledByTimeout, and Cmd + . must never share that fate.
+
+    Created on the first arm and then left in place, armed and disarmed with
+    CGEventTapEnable. Measured: a disabled tap receives zero events, so it gates
+    nothing while the toggle is off, whereas destroying and re-creating the tap
+    leaked a mach port on every cycle (the invalidate is deferred to a runloop
+    that CFRunLoopStop has already stopped, so the pump never runs).
+
+    The callback does integer compares and one Event.set(). No clipboard, no
+    lsappinfo, no lock, no thread creation: blocking here stalls the keyboard
+    system-wide and, past about a second, loses the tap.
+    """
+    KEYDOWN, KEYUP, FLAGSCHANGED = 10, 11, 12
+    F_KEYCODE, F_AUTOREPEAT, F_TGT_PID, F_SRC_PID = 9, 8, 40, 41
+    # Field 39 is the target ProcessSerialNumber; 40 is the target unix pid.
+    BY_TIMEOUT, BY_USER = 0xFFFFFFFE, 0xFFFFFFFF
+    MASK = (1 << KEYDOWN) | (1 << KEYUP) | (1 << FLAGSCHANGED)
+
+    CB = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32,
+                          ctypes.c_void_p, ctypes.c_void_p)
+    cg.CGEventTapCreate.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
+                                    ctypes.c_uint64, CB, ctypes.c_void_p]
+    cg.CGEventTapCreate.restype = ctypes.c_void_p
+    cg.CGEventTapEnable.argtypes = [ctypes.c_void_p, ctypes.c_bool]
+    cg.CGEventGetIntegerValueField.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    cg.CGEventGetIntegerValueField.restype = ctypes.c_int64
+    cf.CFMachPortCreateRunLoopSource.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long]
+    cf.CFMachPortCreateRunLoopSource.restype = ctypes.c_void_p
+    cf.CFRunLoopGetCurrent.restype = ctypes.c_void_p
+    cf.CFRunLoopAddSource.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    mode = ctypes.c_void_p.in_dll(cf, "kCFRunLoopDefaultMode")
+
+    def _cb(proxy, etype, event, refcon):
+        global paste_hijack_enabled
+        try:
+            if etype == KEYDOWN:
+                if cg.CGEventGetIntegerValueField(event, F_KEYCODE) != _V_KC:
+                    return event                    # the hot path: one field read
+                flags = cg.CGEventGetFlags(event)
+                _mod_flags[0] = flags
+                src = cg.CGEventGetIntegerValueField(event, F_SRC_PID)
+                # Cmd+V held down: keep eating the repeats. Gated on Cmd as well as
+                # autorepeat, so a stuck flag can never swallow the plain letter v.
+                if (_v_swallowed[0] and src != _MY_PID and (flags & _FLAG_CMD)
+                        and cg.CGEventGetIntegerValueField(event, F_AUTOREPEAT)):
+                    return None
+                tgt = cg.CGEventGetIntegerValueField(event, F_TGT_PID)
+                if _hijack_decision(flags, src, tgt):
+                    _v_swallowed[0] = True
+                    _paste_signal.set()
+                    return None
+                _v_swallowed[0] = False             # any pass-through resets it, so
+                return event                        # a lost keyup cannot stick
+            if etype == KEYUP:
+                if (_v_swallowed[0]
+                        and cg.CGEventGetIntegerValueField(event, F_KEYCODE) == _V_KC):
+                    _v_swallowed[0] = False
+                    return None
+                return event
+            if etype == FLAGSCHANGED:
+                _mod_flags[0] = cg.CGEventGetFlags(event)   # never suppress these:
+                return event                                # it desyncs global flags
+            if etype in (BY_TIMEOUT, BY_USER):
+                if etype == BY_TIMEOUT:
+                    _paste_timeouts[0] += 1
+                if _paste_timeouts[0] >= 3:
+                    paste_hijack_enabled = False    # a deterministic off beats an
+                    _paste_armed[0] = False         # intermittent one
+                    _v_swallowed[0] = False
+                elif _paste_armed[0] and _paste_tap_port[0]:
+                    cg.CGEventTapEnable(_paste_tap_port[0], True)
+            return event
+        except Exception:
+            return event                            # fail open, always
+
+    cb = CB(_cb)
+    _paste_tap_cbs.append(cb)   # append, never rebind: freeing a trampoline that a
+                                # live tap still calls is an instant segfault
+    port = None
+    try:
+        # tap=kCGSessionEventTap(1), place=kCGHeadInsertEventTap(0), opt=ACTIVE(0)
+        port = cg.CGEventTapCreate(1, 0, 0, MASK, cb, None)
+    except Exception:
+        port = None
+    if not port:
+        _log_launch("paste hijack: tap creation failed (Accessibility?)")
+        _paste_tap_ready.set()
+        return              # the thread dies, so the next arm retries cleanly
+    src = cf.CFMachPortCreateRunLoopSource(None, port, 0)
+    cf.CFRunLoopAddSource(cf.CFRunLoopGetCurrent(), src, mode)
+    cg.CGEventTapEnable(port, True)
+    _paste_tap_port[0] = port
+    _paste_tap_ready.set()
+    cf.CFRunLoopRun()       # for the life of the process
+
+
+def _set_paste_hijack(on: bool) -> None:
+    """Arm or disarm the interceptor. Idempotent, never raises."""
+    # Serialised, and it owns the flag too: the HTTP thread and the menu-bar item
+    # both call this, and two overlapping arms would otherwise each create a tap
+    # (an unstarted Thread reports is_alive() False, so that check alone does not
+    # hold) or leave the flag disagreeing with the tap.
+    global _paste_tap_th, paste_hijack_enabled
+    with _paste_arm_lock:
+        paste_hijack_enabled = bool(on)
+        _paste_armed[0] = bool(on)   # set BEFORE touching the tap: disabling it
+        if not on:                   # notifies the callback, which reads this
+            _v_swallowed[0] = False  # before the platform return: Windows needs it too
+        if not (IS_MAC and HAS_COREGRAPHICS):
+            return          # Windows arms on the flag alone: its hook is already
+        try:                # installed, for the Esc stop
+            if on:
+                if _paste_tap_port[0] is None:
+                    if _paste_tap_th is None or not _paste_tap_th.is_alive():
+                        _paste_tap_ready.clear()
+                        _paste_tap_th = threading.Thread(target=_macos_paste_tap, daemon=True)
+                        _paste_tap_th.start()
+                    _paste_tap_ready.wait(3.0)
+                if _paste_tap_port[0] is not None:
+                    _paste_timeouts[0] = 0
+                    cg.CGEventTapEnable(_paste_tap_port[0], True)
+            elif _paste_tap_port[0] is not None:
+                cg.CGEventTapEnable(_paste_tap_port[0], False)
+        except Exception as exc:
+            _log_launch(f"paste hijack arm({on}) failed: {exc!r}")
+
+
+def _u32():
+    """Our own user32 handle: ctypes.windll caches function objects, so setting a
+    restype there would also change the hwnd _frontmost_token() sees."""
+    global _win_u32
+    if _win_u32 is None:
+        u = ctypes.WinDLL("user32")
+        u.GetAsyncKeyState.argtypes = [ctypes.c_int]
+        u.GetAsyncKeyState.restype = ctypes.c_short   # default c_int breaks 0x8000
+        u.GetForegroundWindow.restype = ctypes.c_void_p
+        u.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        u.GetWindowThreadProcessId.restype = ctypes.c_ulong
+        _win_u32 = u
+    return _win_u32
+
+
+def _win_fg_hwnd() -> int:
+    try:
+        return int(_u32().GetForegroundWindow() or 0)
+    except Exception:
+        return 0
+
+
+def _fg_is_ours(u32, pid_buf) -> bool:
+    """True when the foreground window is our GUI: the native window (by pid) or
+    the Edge app window our page last reported focus from. Both calls return
+    immediately, which the hook requires."""
+    hwnd = u32.GetForegroundWindow()
+    if not hwnd:
+        return False
+    if int(hwnd) == _gui_hwnd[0] and _js_focus_fresh():
+        return True
+    u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid_buf))
+    return pid_buf.value == _MY_PID
+
+
+def _win_paste_filter(holder):
+    """win32_event_filter: eat a real Ctrl+V and wake the worker.
+
+    Runs inside the WH_KEYBOARD_LL proc. No clipboard, no subprocess, no lock, no
+    GetWindowTextW: Windows silently drops a hook that overruns LowLevelHooksTimeout
+    (~300ms), and losing the hook also loses the Esc stop. Returns None for every
+    event we do not take, never False (False would hide the key from on_press).
+    """
+    VK_V, VK_CTRL, VK_ALT, VK_SHIFT = 0x56, 0x11, 0x12, 0x10
+    WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP = 0x100, 0x101, 0x104, 0x105
+    LLKHF_INJECTED = 0x12       # LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED
+    u32 = _u32()
+    gaks = u32.GetAsyncKeyState
+    pid_buf = ctypes.c_ulong()
+
+    def _decide(msg, data):
+        if data.vkCode != VK_V:
+            return False
+        if msg in (WM_KEYUP, WM_SYSKEYUP):
+            if _v_swallowed[0]:
+                _v_swallowed[0] = False
+                return True
+            return False
+        if msg not in (WM_KEYDOWN, WM_SYSKEYDOWN):
+            return False
+        if (_v_swallowed[0] and not (data.flags & LLKHF_INJECTED)
+                and (gaks(VK_CTRL) & 0x8000)):
+            return True     # Ctrl+V held down: keep eating the repeats. Gated on
+                            # Ctrl, so a missed keyup can never leave us swallowing
+                            # the plain letter v.
+        _v_swallowed[0] = False
+        if not paste_hijack_enabled:
+            return False
+        if typing_status.state in ("countdown", "typing", "paused"):
+            return False
+        if data.flags & LLKHF_INJECTED:
+            return False                # our own keys, our replay, other automation
+        if not (gaks(VK_CTRL) & 0x8000):
+            return False
+        if gaks(VK_ALT) & 0x8000:
+            return False                # AltGr is Ctrl+Alt: never eat a character
+        if gaks(VK_SHIFT) & 0x8000:
+            return False                # Ctrl+Shift+V stays a real paste
+        if _fg_is_ours(u32, pid_buf):
+            return False
+        _v_swallowed[0] = True
+        _paste_signal.set()
+        return True
+
+    def _filter(msg, data):
+        try:
+            take = _decide(msg, data)
+        except Exception:
+            take = False                # any bug in here lets the paste through
+        if take:
+            holder[0].suppress_event()  # outside the try: its exception IS the suppression
+        return None
+
+    return _filter
+
+
+def _wait_modifiers_up(limit: float = 1.5) -> bool:
+    """Block until the modifiers are physically released, so our first characters
+    are characters and not menu shortcuts. False if they never let go.
+
+    Reads the tap's flags cache rather than CGEventSourceKeyState, which needs the
+    separate Input Monitoring permission. A single list slot is atomic under the
+    GIL, so no lock and no allocation.
+    """
+    end = time.monotonic() + limit
+    if IS_MAC and HAS_COREGRAPHICS:
+        while time.monotonic() < end:
+            if not (_mod_flags[0] & _FLAG_MODS):
+                time.sleep(0.05)        # let the target's own key state settle
+                return True
+            time.sleep(0.015)
+        return False
+    if sys.platform.startswith("win"):
+        g = _u32().GetAsyncKeyState
+        while time.monotonic() < end:
+            if not any(g(vk) & 0x8000 for vk in (0x11, 0x12, 0x10, 0x5B, 0x5C)):
+                time.sleep(0.03)
+                return True
+            time.sleep(0.015)
+        return False
+    return True
+
+
+def _replay_paste() -> None:
+    """Hand back a paste we swallowed but cannot serve. Our own pid tags the
+    events (Windows marks them injected), so the interceptor passes them straight
+    through and a loop is impossible."""
+    try:
+        if IS_MAC and HAS_COREGRAPHICS:
+            CMD_KC = 55
+            held = bool(_mod_flags[0] & _FLAG_CMD)
+            seq = ([(_V_KC, True, _FLAG_CMD), (_V_KC, False, _FLAG_CMD)] if held else
+                   [(CMD_KC, True, _FLAG_CMD), (_V_KC, True, _FLAG_CMD),
+                    (_V_KC, False, _FLAG_CMD), (CMD_KC, False, 0)])
+            for kc, down, fl in seq:
+                ev = cg.CGEventCreateKeyboardEvent(None, kc, down)
+                if not ev:
+                    continue
+                cg.CGEventSetFlags(ev, fl)
+                cg.CGEventPost(0, ev)
+                cf.CFRelease(ev)
+                time.sleep(0.004)
+        elif sys.platform.startswith("win") and HAS_PYNPUT:
+            kb = Controller()
+            v = KeyCode.from_vk(0x56)   # the VK, not the char: apps bind paste to
+            if _u32().GetAsyncKeyState(0x11) & 0x8000:   # the VK, not the layout
+                kb.press(v)
+                kb.release(v)
+            else:
+                with kb.pressed(Key.ctrl):
+                    kb.press(v)
+                    kb.release(v)
+    except Exception:
+        pass
+
+
+def _serve_paste_hijack() -> None:
+    """Everything the interceptor is forbidden to do, on the worker thread."""
+    try:
+        text = read_clipboard()
+    except Exception:
+        text = ""
+    if (not text.strip()) or len(text) > MAX_HIJACK_CHARS or not is_activated():
+        _replay_paste()         # image / file / empty / oversize, or no licence
+        return
+    if not _wait_modifiers_up():
+        _replay_paste()         # Cmd stuck down: every character would be a chord
+        return
+    with _start_lock:
+        if typing_status.state in ("countdown", "typing", "paused"):
+            _log_launch("paste hijack lost the start slot")
+            return              # no replay: it races the pass-through and can double
+        typing_status.state = "countdown"
+        typing_status.focus_guard = True
+        typing_status.focus_target = None
+        typing_status.gui_token = None   # the origin is never our window (guarded),
+        typing_status.run_id += 1        # so type_text captures the real target
+        try:
+            threading.Thread(
+                target=_typing_thread,
+                args=(text, _hotkey_typing_profile(soft_newline=True), 0.4),
+                daemon=True).start()
+        except Exception:
+            typing_status.state = "idle"
+
+
+def _paste_worker_loop() -> None:
+    """Blocks on an Event, so an armed-but-idle hijack costs nothing."""
+    while True:
+        _paste_signal.wait()
+        _paste_signal.clear()
+        try:
+            _serve_paste_hijack()
+        except Exception as exc:
+            _log_launch(f"paste hijack worker: {exc!r}")
+
+
+def _toggle_paste_hijack() -> None:
+    """Menu-bar kill switch. Same gate as /api/quicktype, off the AppKit thread."""
+    want = not (paste_hijack_enabled or _paste_armed[0])
+    if want and not (_paste_hijack_supported() and is_activated() and accessibility_ok()):
+        want = False
+    _set_paste_hijack(want)
+
+
 def start_global_abort_listener() -> bool:
     """Watch for Esc globally so the user can abort from any app.
 
     Mirrors goghostwriter's emergency stop: pressing Esc while a countdown or
     typing run is active cancels it, even when another window has focus.
     """
-    global _abort_listener, _focus_listener, _hotkey_listener
+    global _abort_listener, _focus_listener, _hotkey_listener, _paste_worker_th
     if _focus_listener is None:
         _focus_listener = threading.Thread(target=_focus_watcher, daemon=True)
         _focus_listener.start()
     if _hotkey_listener is None:
         _hotkey_listener = threading.Thread(target=_hotkey_watcher, daemon=True)
         _hotkey_listener.start()
+    if _paste_worker_th is None:
+        _paste_worker_th = threading.Thread(target=_paste_worker_loop, daemon=True)
+        _paste_worker_th.start()
     if _abort_listener is not None:
         return False
 
@@ -620,12 +1089,34 @@ def start_global_abort_listener() -> bool:
         _abort_listener.start()
         return True
 
-    # Windows/Linux: pynput global listener.
+    # Windows/Linux: pynput global listener. On Windows it also carries the Ctrl+V
+    # hijack, because pynput only accepts an event filter at construction time.
     if HAS_PYNPUT:
+        global paste_hijack_available
+
         def on_press(key):
             if key == Key.esc and typing_status.state in ("countdown", "typing", "paused"):
                 typing_status.cancel_event.set()
-        _abort_listener = Listener(on_press=on_press)
+
+        if sys.platform.startswith("win"):
+            holder = []
+            filt = _win_paste_filter(holder)
+            try:
+                lst = Listener(on_press=on_press, win32_event_filter=filt)
+                # pynput SILENTLY drops kwargs it does not recognise, so a
+                # TypeError is not the signal: check the option actually landed.
+                if lst._options.get("event_filter") is not filt:
+                    raise TypeError("win32_event_filter ignored")
+                holder.append(lst)      # before start(), so the hook cannot fire first
+                paste_hijack_available = True
+            except Exception as exc:
+                lst = Listener(on_press=on_press)
+                paste_hijack_available = False
+                _log_launch(f"paste hijack unavailable ({exc!r}); Esc stop still active")
+            _abort_listener = lst
+        else:
+            _abort_listener = Listener(on_press=on_press)
+
         _abort_listener.daemon = True
         _abort_listener.start()
         return True
@@ -644,7 +1135,7 @@ ACTIVATE_URL = os.environ.get(
 
 # Bump this on every release; the app compares it to the server's latest version
 # and shows a "Download update" banner when this build is behind.
-APP_VERSION = "1.8.1"
+APP_VERSION = "1.9.0"
 VERSION_URL = os.environ.get(
     "HUMANTYPER_VERSION_URL", ACTIVATE_URL.rsplit("/api/", 1)[0] + "/api/version"
 )
@@ -771,8 +1262,17 @@ def _normalize_key(key: str) -> str:
     return "".join(ch for ch in key if ch.isalnum()).upper()
 
 
+_machine_id_cache = [None]
+
+
 def _machine_id() -> str:
-    """A stable, hashed per-machine fingerprint so a key binds to one device."""
+    """A stable, hashed per-machine fingerprint so a key binds to one device.
+
+    Memoized: it cannot change while we run, and is_activated() sits on the
+    hotkey path where forking ioreg per call is real latency.
+    """
+    if _machine_id_cache[0]:
+        return _machine_id_cache[0]
     raw = ""
     try:
         if sys.platform == "darwin":
@@ -807,7 +1307,8 @@ def _machine_id() -> str:
         import getpass
         import platform
         raw = f"{platform.node()}|{getpass.getuser()}|{platform.machine()}"
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    _machine_id_cache[0] = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return _machine_id_cache[0]
 
 
 # Last low-level network failure, surfaced to the GUI with the 'offline' message
@@ -1248,11 +1749,18 @@ def keystroke_delay(prev_char: str, cur_char: str, profile: TypingProfile,
     return min(HARD_CAP, max(floor, d))
 
 
-def _post_keycode_macos(code: int) -> None:
-    """Post key press & release events using CoreGraphics virtual keycodes."""
+def _post_keycode_macos(code: int, flags: int = 0) -> None:
+    """Post key press & release events using CoreGraphics virtual keycodes.
+
+    Events are born carrying whatever modifiers are physically held (measured
+    0x20100008 with Cmd down), so the flags are always set explicitly: otherwise
+    a run beginning while the user still holds Cmd fires menu shortcuts.
+    """
     ev_down = cg.CGEventCreateKeyboardEvent(None, code, True)
     ev_up = cg.CGEventCreateKeyboardEvent(None, code, False)
     if ev_down and ev_up:
+        cg.CGEventSetFlags(ev_down, flags)
+        cg.CGEventSetFlags(ev_up, flags)
         cg.CGEventPost(0, ev_down)
         time.sleep(KEY_HOLD)
         cg.CGEventPost(0, ev_up)
@@ -1275,6 +1783,8 @@ def _post_unicode_macos(ch: str) -> None:
     cg.CGEventKeyboardSetUnicodeString(ev_up, length, ctypes.byref(arr))
 
     if ev_down and ev_up:
+        cg.CGEventSetFlags(ev_down, 0)   # held modifiers must not reach the target
+        cg.CGEventSetFlags(ev_up, 0)     # (the unicode payload survives the strip)
         cg.CGEventPost(0, ev_down)
         time.sleep(KEY_HOLD)
         cg.CGEventPost(0, ev_up)
@@ -1282,10 +1792,10 @@ def _post_unicode_macos(ch: str) -> None:
         cf.CFRelease(ev_up)
 
 
-def press_char_macos(ch: str) -> None:
+def press_char_macos(ch: str, soft_newline: bool = False) -> None:
     """Mac native implementation using CoreGraphics events."""
-    if ch == "\n":
-        _post_keycode_macos(36)    # Enter
+    if ch in ("\n", "\r"):
+        _post_keycode_macos(36, 0x20000 if soft_newline else 0)   # Enter / Shift+Enter
     elif ch == "\t":
         _post_keycode_macos(48)    # Tab
     elif ch == "\b":
@@ -1294,15 +1804,20 @@ def press_char_macos(ch: str) -> None:
         _post_unicode_macos(ch)
 
 
-def press_char(kb, ch: str) -> None:
+def press_char(kb, ch: str, soft_newline: bool = False) -> None:
     """Send a single character as a real key event."""
     if IS_MAC and HAS_COREGRAPHICS:
-        press_char_macos(ch)
+        press_char_macos(ch, soft_newline)
     else:
         # Fallback to pynput (Windows/Linux).
-        if ch == "\n":
-            kb.press(Key.enter)
-            kb.release(Key.enter)
+        if ch in ("\n", "\r"):
+            if soft_newline:
+                with kb.pressed(Key.shift):
+                    kb.press(Key.enter)
+                    kb.release(Key.enter)
+            else:
+                kb.press(Key.enter)
+                kb.release(Key.enter)
         elif ch == "\t":
             kb.press(Key.tab)
             kb.release(Key.tab)
@@ -1441,7 +1956,7 @@ def type_text(text: str, profile: TypingProfile, countdown: float, is_gui: bool 
             typing_status.state = "aborted"
             return
 
-        press_char(kb, ch)
+        press_char(kb, ch, profile.soft_newline)
         prev = ch
 
     elapsed = time.perf_counter() - start
@@ -1508,9 +2023,22 @@ def _read_clipboard_windows() -> str:
 
 
 def read_clipboard() -> str:
-    """Best-effort cross-platform clipboard read."""
+    """Best-effort cross-platform clipboard read, with newlines normalized to \\n.
+
+    Windows hands back CRLF (CF_UNICODETEXT is defined that way) and press_char
+    only special-cases "\\n", so a raw CR would be typed as its own bare Return:
+    every line break doubled, and in a chat app the half-written message SENT
+    before the rest of it is typed. pbpaste/xclip already normalize via text=True.
+    """
+    return _read_clipboard_raw().replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _read_clipboard_raw() -> str:
     if sys.platform == "darwin":
-        return subprocess.run(["pbpaste"], capture_output=True, text=True).stdout
+        # Timed: a hung pbpaste would strand the run in "countdown" forever, and
+        # every later run would answer "Already typing".
+        return subprocess.run(["pbpaste"], capture_output=True, text=True,
+                              timeout=5).stdout
     if sys.platform.startswith("win"):
         return _read_clipboard_windows()
     if sys.platform.startswith("linux"):
@@ -1591,6 +2119,13 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
                             "input_monitoring": input_monitoring_ok()})
         elif parsed.path == "/api/profiles":
             self.send_json({"profiles": load_user_profiles()})
+        elif parsed.path == "/api/quicktype":
+            # The toggles live only in server memory, so a page reload (or the menu
+            # bar flipping one) would otherwise leave a switch reading off while
+            # the engine still eats every Cmd+V.
+            self.send_json({"hotkey": hotkey_enabled, "clipwatch": clipwatch_enabled,
+                            "paste_hijack": paste_hijack_enabled,
+                            "paste_supported": _paste_hijack_supported()})
         elif parsed.path == "/api/ai/settings":
             s = load_ai_settings()
             # Never return the raw API keys; only whether one is stored.
@@ -1827,14 +2362,34 @@ class GUIRequestHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/quicktype":
             body = self._read_body()
             try:
-                global hotkey_enabled, clipwatch_enabled, _last_clip
+                global hotkey_enabled, clipwatch_enabled, _last_clip, _hotkey_profile
                 p = json.loads(body)
+                if "app_focused" in p:      # a focus report, carrying no toggle change
+                    _js_focus[0] = bool(p.get("app_focused"))
+                    _js_focus[1] = time.monotonic()
+                    if _js_focus[0] and sys.platform.startswith("win"):
+                        # Resolve the hwnd here: in Edge app mode the foreground
+                        # pid is Edge's, so a pid test alone protects nothing.
+                        _gui_hwnd[0] = _win_fg_hwnd()
                 hotkey_enabled = bool(p.get("hotkey", hotkey_enabled))
                 was = clipwatch_enabled
                 clipwatch_enabled = bool(p.get("clipwatch", clipwatch_enabled))
                 if clipwatch_enabled and not was:
                     _last_clip = None   # re-baseline so it won't fire on the current clipboard
-                self.send_json({"ok": True, "hotkey": hotkey_enabled, "clipwatch": clipwatch_enabled})
+                want = bool(p.get("paste_hijack", paste_hijack_enabled))
+                # Never arm for an app that cannot type: it would eat the paste and
+                # then bail. Gated here, on the HTTP thread, because is_activated()
+                # forks ioreg and accessibility_ok() dlopens ApplicationServices.
+                if want and not (_paste_hijack_supported()
+                                 and is_activated() and accessibility_ok()):
+                    want = False
+                _set_paste_hijack(want)   # owns the flag, and is idempotent
+                if isinstance(p.get("profile"), dict):
+                    _hotkey_profile = p["profile"]
+                self.send_json({"ok": True, "hotkey": hotkey_enabled,
+                                "clipwatch": clipwatch_enabled,
+                                "paste_hijack": paste_hijack_enabled,
+                                "paste_supported": _paste_hijack_supported()})
             except Exception as e:
                 self.send_json({"ok": False, "error": str(e)}, 400)
         else:
@@ -1996,6 +2551,10 @@ def _install_status_item(window):
                 def typeClipboard_(self, sender):
                     threading.Thread(target=_fire_quick_type, daemon=True).start()
 
+                def pasteHijack_(self, sender):
+                    # Off the AppKit thread: the licence check forks ioreg.
+                    threading.Thread(target=_toggle_paste_hijack, daemon=True).start()
+
                 def stopTyping_(self, sender):
                     typing_status.cancel_event.set()
 
@@ -2017,7 +2576,15 @@ def _install_status_item(window):
                                     if typing_status.pause_reason == "waiting" else "Paused")
                         else:
                             line = "Ready"
+                        if paste_hijack_enabled:
+                            line += " · paste as typing on"
                         _status_bar_refs["status_mi"].setTitle_(f"Human Typer — {line}")
+                    except Exception:
+                        pass
+                    try:
+                        # Its own guard, so a missing ref cannot also swallow the
+                        # status line above.
+                        _status_bar_refs["paste_mi"].setState_(1 if paste_hijack_enabled else 0)
                     except Exception:
                         pass
 
@@ -2053,12 +2620,15 @@ def _install_status_item(window):
             menu.addItem_(NSMenuItem.separatorItem())
             add("Show Human Typer", "showWindow:")
             add("Type Clipboard Now", "typeClipboard:")
+            paste_mi = add("Paste as typing", "pasteHijack:")
+            paste_mi.setState_(1 if paste_hijack_enabled else 0)
             add("Stop Typing", "stopTyping:")
             menu.addItem_(NSMenuItem.separatorItem())
             add("Quit Human Typer", "quitApp:", "q")
             menu.setDelegate_(target)
             item.setMenu_(menu)
-            _status_bar_refs.update(item=item, menu=menu, target=target, status_mi=status_mi)
+            _status_bar_refs.update(item=item, menu=menu, target=target,
+                                    status_mi=status_mi, paste_mi=paste_mi)
             _log_launch("menu bar item installed")
         except Exception as exc:
             _log_launch(f"status item failed: {exc!r}")
@@ -2096,16 +2666,20 @@ def run_app(port=5000, force_browser=False):
                 min_size=(960, 680),
                 background_color="#0b0b12",
             )
+            _native_ui[0] = True   # our own window: the paste hijack can trust the
+                                   # event's target pid and ignore the JS focus report
             if sys.platform == "darwin":
                 webview.start(_install_status_item, win)
             else:
                 webview.start()
             return
         except ImportError as exc:
+            _native_ui[0] = False
             _log_launch(f"pywebview import failed: {exc!r}")
             print("pywebview not installed — opening in your browser instead.")
             print("For the native app window, run: pip install pywebview")
         except Exception as exc:
+            _native_ui[0] = False
             _log_launch(f"native window failed: {exc!r}")
             print(f"Native window unavailable ({exc}); opening in your browser instead.")
 

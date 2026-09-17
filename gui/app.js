@@ -20,6 +20,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const formModeCheckbox = document.getElementById('form-mode');
     const hotkeyToggle = document.getElementById('hotkey-toggle');
     const clipwatchToggle = document.getElementById('clipwatch-toggle');
+    const pasteToggle = document.getElementById('paste-toggle');
+    const pasteGroup = document.getElementById('paste-group');
     const typoGroup = document.getElementById('typo-group');
     const typosSlider = document.getElementById('typos');
     const typosValue = document.getElementById('typos-value');
@@ -150,6 +152,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (accessPoll) { clearInterval(accessPoll); accessPoll = null; }
         appRoot.classList.remove('hidden');
         initAI();
+        loadQuickType();
         // Adopt a run already in flight (browser mode survives a page reload) so it
         // stays visible and stoppable instead of typing on unwatched.
         fetch('/api/status').then((r) => r.json()).then((d) => {
@@ -264,6 +267,7 @@ document.addEventListener('DOMContentLoaded', () => {
             hesitation_prob: s.hesitation_prob, hesitation: s.hesitation,
         };
         updateStealth();
+        pushQuickTypeProfile();
     }
 
     function currentSettings() {
@@ -647,15 +651,80 @@ document.addEventListener('DOMContentLoaded', () => {
 
     renderQueue();
 
-    // ============================ Quick-type hotkey + clipboard watch ============================
-    function syncQuickType() {
-        fetch('/api/quicktype', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ hotkey: hotkeyToggle.checked, clipwatch: clipwatchToggle.checked }),
-        }).catch(() => { /* ignore */ });
+    // ============================ Quick-type hotkey, paste as typing, clipboard watch ============================
+    // These runs use the same settings shown in this panel, so push a copy to the
+    // engine whenever they change. Mirrors beginTyping, NOT currentSettings():
+    // currentSettings sends typos as a raw percent, which would be 100x too high.
+    function hotkeyProfile() {
+        const humanize = humanizeCheckbox.checked;
+        return {
+            delay_ms: parseFloat(speedSlider.value),
+            humanize,
+            typos: humanize ? parseFloat(typosSlider.value) / 100.0 : 0.0,
+            variance: advanced.variance,
+            word_pause: advanced.word_pause,
+            sentence_pause: advanced.sentence_pause,
+            hesitation_prob: advanced.hesitation_prob,
+            hesitation: advanced.hesitation,
+        };
     }
+
+    // The engine is the source of truth: it can refuse the paste hijack (no
+    // license, no Accessibility, repeated tap timeouts) and the menu bar item can
+    // flip it behind our back.
+    function applyQuickType(d) {
+        if (!d || d.ok === false) return;
+        hotkeyToggle.checked = !!d.hotkey;
+        clipwatchToggle.checked = !!d.clipwatch;
+        pasteToggle.checked = !!d.paste_hijack;
+        if (pasteGroup) pasteGroup.classList.toggle('hidden', d.paste_supported === false);
+    }
+
+    function syncQuickType() {
+        return fetch('/api/quicktype', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                hotkey: hotkeyToggle.checked,
+                clipwatch: clipwatchToggle.checked,
+                paste_hijack: pasteToggle.checked,
+                profile: hotkeyProfile(),
+            }),
+        }).then((r) => r.json()).then(applyQuickType).catch(() => { /* ignore */ });
+    }
+
+    async function loadQuickType() {
+        try { applyQuickType(await (await fetch('/api/quicktype')).json()); }
+        catch (e) { /* leave the switches as they are */ }
+    }
+
     hotkeyToggle.addEventListener('change', syncQuickType);
     clipwatchToggle.addEventListener('change', syncQuickType);
+    pasteToggle.addEventListener('change', syncQuickType);
+
+    // Keep the engine's copy of the settings fresh. Debounced, because the speed
+    // slider fires per pixel. No traffic at all while all three switches are off.
+    let qtPush = null;
+    function pushQuickTypeProfile() {
+        if (!hotkeyToggle.checked && !clipwatchToggle.checked && !pasteToggle.checked) return;
+        clearTimeout(qtPush);
+        qtPush = setTimeout(syncQuickType, 400);
+    }
+    speedSlider.addEventListener('input', pushQuickTypeProfile);
+    typosSlider.addEventListener('input', pushQuickTypeProfile);
+    humanizeCheckbox.addEventListener('change', pushQuickTypeProfile);
+
+    // Our own window must keep pasting normally in browser mode, where the
+    // frontmost process is the browser and not us.
+    function reportFocus(focused) {
+        fetch('/api/quicktype', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ app_focused: focused }),
+        }).catch(() => { /* ignore */ });
+    }
+    window.addEventListener('focus', () => { reportFocus(true); loadQuickType(); });
+    window.addEventListener('blur', () => reportFocus(false));
+    document.addEventListener('visibilitychange', () => reportFocus(document.hasFocus()));
+    reportFocus(document.hasFocus());
 
     // ============================ Test Field (in-window preview) ============================
     // Types into the in-window field WITHOUT the full-screen overlay, so the field
@@ -855,5 +924,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Heartbeat: lets the engine tell "window still open" from "orphaned" when it
     // can't own the window process (Edge app-mode handoff). Top-level so the
     // license/access gates keep it alive too, not just the unlocked app.
-    setInterval(() => { fetch('/api/permissions').catch(() => {}); }, 45000);
+    setInterval(() => {
+        fetch('/api/permissions').catch(() => {});
+        reportFocus(document.hasFocus());   // so a missed blur cannot latch
+    }, 45000);
 });

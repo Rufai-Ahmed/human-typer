@@ -506,8 +506,8 @@ body{
 
 .toggle-state{ font-size:var(--text-sm); color:var(--text-muted); letter-spacing:var(--ls-key); }
 .toggle-state::after{ content:"off"; }
-.toggle-control:has(#humanize:checked) .toggle-state{ color:var(--accent-text); }
-.toggle-control:has(#humanize:checked) .toggle-state::after{ content:"on"; }
+.toggle-control:has(input:checked) .toggle-state{ color:var(--accent-text); }
+.toggle-control:has(input:checked) .toggle-state::after{ content:"on"; }
 
 /* disabled control group (typo slider when Humanize is off) */
 .control-group.disabled{ opacity:0.4; pointer-events:none; }
