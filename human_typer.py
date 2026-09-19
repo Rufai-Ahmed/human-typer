@@ -3,7 +3,16 @@
 Human Typer — simulate human typing at the OS level.
 
 Generates real keystrokes. On macOS, this is done natively via CoreGraphics (ctypes)
-to bypass external library requirements. On Windows/Linux it uses pynput.
+to bypass external library requirements; on Windows via SendInput (ctypes) with
+pynput as the fallback; on Linux via pynput.
+
+Every character that exists on the active keyboard layout is sent as the key it
+lives on (plus Shift/Option or Shift/AltGr), exactly as a physical keyboard would,
+with the character attached as a Unicode payload for local apps. Remote-desktop
+clients such as RustDesk, VNC and AnyDesk forward the physical key, not the
+payload, so a payload-only event with a placeholder keycode arrives at the far
+machine as the placeholder key: "aaaaa" on macOS (keycode 0 is A). Characters
+that need a dead key or are absent from the layout keep the payload-only path.
 
 Speed is set as a per-keystroke delay (2-200 ms). With "Humanize" on, each
 interval is drawn right-skewed (log-normal) around that delay and shaped by a
@@ -65,6 +74,7 @@ import ctypes.util
 
 IS_MAC = sys.platform == "darwin"
 HAS_COREGRAPHICS = False
+HAS_CARBON_LAYOUT = False
 
 # How long a key is "held" between its press and release events (seconds).
 # Small so fast speeds stay fast, but non-zero so target apps reliably register it.
@@ -100,6 +110,31 @@ if IS_MAC:
         cg.CGEventSourceKeyState.restype = ctypes.c_bool
 
         HAS_COREGRAPHICS = True
+    except Exception:
+        pass
+
+    # Carbon keyboard-layout lookup, so characters can be sent on their real keys.
+    # The TIS* calls assert the main thread on macOS 14+ (the same assertion that
+    # crashed pynput here), so _build_layout_map_macos only ever runs there.
+    try:
+        cb = ctypes.CDLL('/System/Library/Frameworks/Carbon.framework/Carbon')
+        cb.TISCopyCurrentKeyboardLayoutInputSource.restype = ctypes.c_void_p
+        cb.TISGetInputSourceProperty.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        cb.TISGetInputSourceProperty.restype = ctypes.c_void_p
+        cb.LMGetKbdType.restype = ctypes.c_uint8
+        cb.UCKeyTranslate.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint16, ctypes.c_uint16, ctypes.c_uint32,
+            ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32),
+            ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(ctypes.c_uint16),
+        ]
+        cb.UCKeyTranslate.restype = ctypes.c_int32
+        _kTISPropertyUnicodeKeyLayoutData = ctypes.c_void_p.in_dll(
+            cb, "kTISPropertyUnicodeKeyLayoutData")
+        cf.CFDataGetBytePtr.argtypes = [ctypes.c_void_p]
+        cf.CFDataGetBytePtr.restype = ctypes.c_void_p
+        cf.CFDataGetLength.argtypes = [ctypes.c_void_p]
+        cf.CFDataGetLength.restype = ctypes.c_long
+        HAS_CARBON_LAYOUT = HAS_COREGRAPHICS
     except Exception:
         pass
 
@@ -869,6 +904,18 @@ def _u32():
         u.GetForegroundWindow.restype = ctypes.c_void_p
         u.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
         u.GetWindowThreadProcessId.restype = ctypes.c_ulong
+        # Layout-aware typing (_win_press_char). HKL is pointer-sized on Win64
+        # and VkKeyScanEx returns a SHORT, so the defaults (c_int) would mangle both.
+        u.GetKeyboardLayout.argtypes = [ctypes.c_ulong]
+        u.GetKeyboardLayout.restype = ctypes.c_void_p
+        u.VkKeyScanExW.argtypes = [ctypes.c_uint16, ctypes.c_void_p]
+        u.VkKeyScanExW.restype = ctypes.c_short
+        u.MapVirtualKeyExW.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p]
+        u.MapVirtualKeyExW.restype = ctypes.c_uint
+        u.GetKeyState.argtypes = [ctypes.c_int]
+        u.GetKeyState.restype = ctypes.c_short
+        u.SendInput.argtypes = [ctypes.c_uint, ctypes.c_void_p, ctypes.c_int]
+        u.SendInput.restype = ctypes.c_uint
         _win_u32 = u
     return _win_u32
 
@@ -1135,7 +1182,7 @@ ACTIVATE_URL = os.environ.get(
 
 # Bump this on every release; the app compares it to the server's latest version
 # and shows a "Download update" banner when this build is behind.
-APP_VERSION = "1.9.0"
+APP_VERSION = "1.9.1"
 VERSION_URL = os.environ.get(
     "HUMANTYPER_VERSION_URL", ACTIVATE_URL.rsplit("/api/", 1)[0] + "/api/version"
 )
@@ -1768,28 +1815,167 @@ def _post_keycode_macos(code: int, flags: int = 0) -> None:
         cf.CFRelease(ev_up)
 
 
-def _post_unicode_macos(ch: str) -> None:
-    """Post key press & release using CoreGraphics Unicode payload binding."""
+# Character -> (virtual keycode, CGEventFlags) for the active keyboard layout.
+# Built on the main thread (TIS requirement) and refreshed before each run so a
+# layout switch after launch is picked up. Empty until the first build.
+_layout_map = {}
+_layout_map_lock = threading.Lock()
+MAC_SHIFT_FLAG = 0x20000       # kCGEventFlagMaskShift
+MAC_OPTION_FLAG = 0x80000      # kCGEventFlagMaskAlternate
+MAC_KC_SHIFT, MAC_KC_OPTION = 56, 58
+# Keypad keys are skipped so digits and operators map to the main rows, the way
+# a typist reaches them; function/arrow keys never yield a printable char anyway.
+_MAC_KEYPAD_KEYCODES = {65, 67, 69, 71, 75, 78, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92}
+
+
+def _build_layout_map_macos() -> dict:
+    """Reverse the active layout with UCKeyTranslate: char -> (keycode, flags).
+
+    MAIN THREAD ONLY. Tries no modifier, Shift, Option, Shift+Option in that
+    order so a character lands on its simplest chord. Dead-key chords are left
+    out: posting one would arm an accent instead of typing a character.
+    """
+    src = cb.TISCopyCurrentKeyboardLayoutInputSource()
+    if not src:
+        return {}
+    try:
+        data = cb.TISGetInputSourceProperty(src, _kTISPropertyUnicodeKeyLayoutData)
+        if not data:
+            return {}
+        layout = ctypes.create_string_buffer(
+            ctypes.string_at(cf.CFDataGetBytePtr(data), cf.CFDataGetLength(data)))
+    finally:
+        cf.CFRelease(src)
+    kbd_type = cb.LMGetKbdType()
+
+    # UCKeyTranslate takes Carbon modifier bits >> 8: shift = 2, option = 8.
+    chords = ((0, 0), (2, MAC_SHIFT_FLAG), (8, MAC_OPTION_FLAG), (10, MAC_SHIFT_FLAG | MAC_OPTION_FLAG))
+    out = (ctypes.c_uint16 * 4)()
+    dead = ctypes.c_uint32(0)
+    length = ctypes.c_ulong(0)
+    table = {}
+    for mod_state, flags in chords:
+        for kc in range(128):
+            if kc in _MAC_KEYPAD_KEYCODES:
+                continue
+            dead.value = 0
+            if cb.UCKeyTranslate(layout, kc, 0, mod_state, kbd_type, 0,
+                                 ctypes.byref(dead), 4, ctypes.byref(length), out) != 0:
+                continue
+            if dead.value or length.value != 1:
+                continue
+            code = out[0]
+            if code < 32 or code == 127 or 0xF700 <= code <= 0xF8FF:
+                continue
+            table.setdefault(chr(code), (kc, flags))
+    return table
+
+
+def _refresh_layout_map_macos(timeout: float = 0.5) -> None:
+    """Rebuild the layout map on the main thread; keep the old one if it can't run.
+
+    Worker threads hop over via the AppKit main queue, which only drains while
+    our pywebview window runs its loop; in the browser fallback the map built at
+    launch stands.
+    """
+    if not HAS_CARBON_LAYOUT:
+        return
+    on_main_thread = threading.current_thread() is threading.main_thread()
+    if not on_main_thread and not _native_ui[0]:
+        return
+
+    def build():
+        try:
+            table = _build_layout_map_macos()
+        except Exception as exc:
+            _log_launch(f"layout map failed: {exc!r}")
+            return
+        if table:
+            with _layout_map_lock:
+                _layout_map.clear()
+                _layout_map.update(table)
+
+    if on_main_thread:
+        build()
+        return
+    done = threading.Event()
+
+    def on_main():
+        try:
+            build()
+        finally:
+            done.set()
+    try:
+        from Foundation import NSOperationQueue
+        NSOperationQueue.mainQueue().addOperationWithBlock_(on_main)
+    except Exception as exc:
+        _log_launch(f"layout map hop failed: {exc!r}")
+        return
+    done.wait(timeout)
+
+
+def _layout_chord_macos(ch: str):
+    with _layout_map_lock:
+        return _layout_map.get(ch)
+
+
+def _post_unicode_macos(ch: str, keycode: int = 0, flags: int = 0) -> None:
+    """Post key press & release carrying the character as a Unicode payload.
+
+    With a real keycode and its modifier flags the event reads like the physical
+    keystroke (what remote-desktop clients forward); the payload still pins the
+    character for local apps. Keycode 0 is the placeholder for characters that
+    have no key on the layout.
+    """
     utf16_units = ch.encode('utf-16-le')
     length = len(utf16_units) // 2
     arr_type = ctypes.c_uint16 * length
     arr = arr_type.from_buffer_copy(utf16_units)
 
-    # Virtual keycode 0 acts as a placeholder; the Unicode payload defines the char.
-    ev_down = cg.CGEventCreateKeyboardEvent(None, 0, True)
+    ev_down = cg.CGEventCreateKeyboardEvent(None, keycode, True)
     cg.CGEventKeyboardSetUnicodeString(ev_down, length, ctypes.byref(arr))
 
-    ev_up = cg.CGEventCreateKeyboardEvent(None, 0, False)
+    ev_up = cg.CGEventCreateKeyboardEvent(None, keycode, False)
     cg.CGEventKeyboardSetUnicodeString(ev_up, length, ctypes.byref(arr))
 
     if ev_down and ev_up:
-        cg.CGEventSetFlags(ev_down, 0)   # held modifiers must not reach the target
-        cg.CGEventSetFlags(ev_up, 0)     # (the unicode payload survives the strip)
+        cg.CGEventSetFlags(ev_down, flags)   # explicit flags: physically held modifiers
+        cg.CGEventSetFlags(ev_up, flags)     # must not leak in (the payload survives)
         cg.CGEventPost(0, ev_down)
         time.sleep(KEY_HOLD)
         cg.CGEventPost(0, ev_up)
         cf.CFRelease(ev_down)
         cf.CFRelease(ev_up)
+
+
+def _post_chord_macos(ch: str, keycode: int, flags: int) -> None:
+    """Type ch on its real key, pressing and releasing Shift/Option around it.
+
+    CoreGraphics turns a modifier keycode into a flagsChanged event, so the
+    stream matches a physical keyboard: shift down, key, shift up.
+    """
+    mods = [(MAC_KC_SHIFT, MAC_SHIFT_FLAG), (MAC_KC_OPTION, MAC_OPTION_FLAG)]
+    held = 0
+    pressed = []
+    for kc, flag in mods:
+        if flags & flag:
+            held |= flag
+            _post_modifier_macos(kc, True, held)
+            pressed.append((kc, flag))
+            time.sleep(KEY_HOLD)
+    _post_unicode_macos(ch, keycode, flags)
+    for kc, flag in reversed(pressed):
+        held &= ~flag
+        time.sleep(KEY_HOLD)
+        _post_modifier_macos(kc, False, held)
+
+
+def _post_modifier_macos(keycode: int, down: bool, flags: int) -> None:
+    ev = cg.CGEventCreateKeyboardEvent(None, keycode, down)
+    if ev:
+        cg.CGEventSetFlags(ev, flags)
+        cg.CGEventPost(0, ev)
+        cf.CFRelease(ev)
 
 
 def press_char_macos(ch: str, soft_newline: bool = False) -> None:
@@ -1801,13 +1987,135 @@ def press_char_macos(ch: str, soft_newline: bool = False) -> None:
     elif ch == "\b":
         _post_keycode_macos(51)    # Backspace
     else:
-        _post_unicode_macos(ch)
+        chord = _layout_chord_macos(ch)
+        if chord:
+            _post_chord_macos(ch, *chord)
+        else:
+            _post_unicode_macos(ch)
+
+
+# --- Windows: SendInput with the layout's own virtual keys and scan codes ---
+# pynput sends a shifted or AltGr character as KEYEVENTF_UNICODE (VK_PACKET),
+# which remote-desktop clients drop or garble; only unshifted keys got a real
+# virtual key. This path resolves every character through VkKeyScanEx on the
+# foreground window's layout and presses the chord like a physical keyboard.
+IS_WIN = sys.platform.startswith("win")
+WIN_KEYEVENTF_EXTENDEDKEY = 0x0001
+WIN_KEYEVENTF_KEYUP = 0x0002
+WIN_KEYEVENTF_UNICODE = 0x0004
+WIN_VK_LSHIFT, WIN_VK_LCONTROL, WIN_VK_LMENU, WIN_VK_RMENU = 0xA0, 0xA2, 0xA4, 0xA5
+WIN_VK_CAPITAL = 0x14
+WIN_INPUT_KEYBOARD = 1
+
+
+class _WinMouseInput(ctypes.Structure):
+    _fields_ = [("dx", ctypes.c_int32), ("dy", ctypes.c_int32), ("mouseData", ctypes.c_uint32),
+                ("dwFlags", ctypes.c_uint32), ("time", ctypes.c_uint32),
+                ("dwExtraInfo", ctypes.c_size_t)]
+
+
+class _WinKeybdInput(ctypes.Structure):
+    _fields_ = [("wVk", ctypes.c_uint16), ("wScan", ctypes.c_uint16), ("dwFlags", ctypes.c_uint32),
+                ("time", ctypes.c_uint32), ("dwExtraInfo", ctypes.c_size_t)]
+
+
+class _WinHardwareInput(ctypes.Structure):
+    _fields_ = [("uMsg", ctypes.c_uint32), ("wParamL", ctypes.c_uint16), ("wParamH", ctypes.c_uint16)]
+
+
+class _WinInputUnion(ctypes.Union):
+    _fields_ = [("mi", _WinMouseInput), ("ki", _WinKeybdInput), ("hi", _WinHardwareInput)]
+
+
+class _WinInput(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_uint32), ("u", _WinInputUnion)]
+
+
+def _win_key_input(vk: int, scan: int, flags: int) -> "_WinInput":
+    inp = _WinInput()
+    inp.type = WIN_INPUT_KEYBOARD
+    inp.u.ki = _WinKeybdInput(vk, scan, flags, 0, 0)
+    return inp
+
+
+def _win_send_inputs(inputs) -> bool:
+    n = len(inputs)
+    arr = (_WinInput * n)(*inputs)
+    return _u32().SendInput(n, ctypes.byref(arr), ctypes.sizeof(_WinInput)) == n
+
+
+def _win_fg_layout():
+    """HKL of the foreground window's thread (its layout, not ours)."""
+    u32 = _u32()
+    hwnd = u32.GetForegroundWindow()
+    tid = u32.GetWindowThreadProcessId(hwnd, None) if hwnd else 0
+    return u32.GetKeyboardLayout(tid)
+
+
+def _win_resolve_chord(ch: str, hkl):
+    """(vk, scan, shift, ctrl, alt) for ch on the layout, or None if it has no key.
+
+    Caps Lock is honoured: a letter whose other case sits on the same key gets
+    its Shift requirement inverted while the lock is on.
+    """
+    u32 = _u32()
+    res = u32.VkKeyScanExW(ord(ch), hkl) & 0xFFFF
+    if res == 0xFFFF:
+        return None
+    vk, state = res & 0xFF, (res >> 8) & 0xFF
+    shift, ctrl, alt = bool(state & 1), bool(state & 2), bool(state & 4)
+    if ch.isalpha() and ch.swapcase() != ch and (u32.GetKeyState(WIN_VK_CAPITAL) & 1):
+        other = u32.VkKeyScanExW(ord(ch.swapcase()), hkl) & 0xFFFF
+        if other != 0xFFFF and (other & 0xFF) == vk:
+            shift = not shift
+    scan = u32.MapVirtualKeyExW(vk, 0, hkl)   # MAPVK_VK_TO_VSC
+    return vk, scan, shift, ctrl, alt
+
+
+def _win_press_char(ch: str) -> bool:
+    """Type ch via SendInput on its real key; False if it must go through pynput."""
+    try:
+        if len(ch) != 1 or ord(ch) > 0xFFFF:
+            return False
+        hkl = _win_fg_layout()
+        chord = _win_resolve_chord(ch, hkl)
+        if chord is None:
+            # Not on the layout (needs a dead key, or a different script):
+            # the Unicode packet is the only way to deliver it.
+            code = ord(ch)
+            return _win_send_inputs([
+                _win_key_input(0, code, WIN_KEYEVENTF_UNICODE),
+                _win_key_input(0, code, WIN_KEYEVENTF_UNICODE | WIN_KEYEVENTF_KEYUP),
+            ])
+        vk, scan, shift, ctrl, alt = chord
+        mods = []
+        if shift:
+            mods.append((WIN_VK_LSHIFT, 0))
+        if ctrl and alt:
+            mods.append((WIN_VK_LCONTROL, 0))     # AltGr is Ctrl+RightAlt on the wire
+            mods.append((WIN_VK_RMENU, WIN_KEYEVENTF_EXTENDEDKEY))
+        elif ctrl:
+            mods.append((WIN_VK_LCONTROL, 0))
+        elif alt:
+            mods.append((WIN_VK_LMENU, 0))
+        u32 = _u32()
+        down = [_win_key_input(mvk, u32.MapVirtualKeyExW(mvk, 0, hkl), mflags) for mvk, mflags in mods]
+        up = [_win_key_input(mvk, u32.MapVirtualKeyExW(mvk, 0, hkl), mflags | WIN_KEYEVENTF_KEYUP)
+              for mvk, mflags in reversed(mods)]
+        if not _win_send_inputs(down + [_win_key_input(vk, scan, 0)]):
+            return False
+        time.sleep(KEY_HOLD)
+        return _win_send_inputs([_win_key_input(vk, scan, WIN_KEYEVENTF_KEYUP)] + up)
+    except Exception:
+        return False
 
 
 def press_char(kb, ch: str, soft_newline: bool = False) -> None:
     """Send a single character as a real key event."""
     if IS_MAC and HAS_COREGRAPHICS:
         press_char_macos(ch, soft_newline)
+    elif IS_WIN and ch not in ("\n", "\r", "\t", "\b") and _win_press_char(ch):
+        return
     else:
         # Fallback to pynput (Windows/Linux).
         if ch in ("\n", "\r"):
@@ -1863,6 +2171,8 @@ def type_text(text: str, profile: TypingProfile, countdown: float, is_gui: bool 
     # thread and crashes inside the Cocoa app. Only build it where it's used.
     use_pynput = HAS_PYNPUT and not (IS_MAC and HAS_COREGRAPHICS)
     kb = Controller() if use_pynput else None
+    if IS_MAC and HAS_COREGRAPHICS:
+        _refresh_layout_map_macos()   # the layout may have changed since launch
 
     if is_gui:
         typing_status.state = "countdown"
@@ -2648,6 +2958,8 @@ def run_app(port=5000, force_browser=False):
     url = f"http://127.0.0.1:{p}"
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     start_global_abort_listener()   # CGEventTap for the global stop runs on Accessibility
+    if IS_MAC and HAS_COREGRAPHICS:
+        _refresh_layout_map_macos()   # still the main thread: build the first map here
 
     if not force_browser:
         try:
