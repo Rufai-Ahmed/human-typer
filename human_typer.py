@@ -1820,8 +1820,10 @@ def _post_keycode_macos(code: int, flags: int = 0) -> None:
 # layout switch after launch is picked up. Empty until the first build.
 _layout_map = {}
 _layout_map_lock = threading.Lock()
-MAC_SHIFT_FLAG = 0x20000       # kCGEventFlagMaskShift
-MAC_OPTION_FLAG = 0x80000      # kCGEventFlagMaskAlternate
+# Each carries the left key's device bit as a physical keyboard does: Flutter
+# apps (RustDesk) read only that bit to decide the modifier is held.
+MAC_SHIFT_FLAG = 0x20000 | 0x2     # kCGEventFlagMaskShift | NX_DEVICELSHIFTKEYMASK
+MAC_OPTION_FLAG = 0x80000 | 0x20   # kCGEventFlagMaskAlternate | NX_DEVICELALTKEYMASK
 MAC_KC_SHIFT, MAC_KC_OPTION = 56, 58
 # Keypad keys are skipped so digits and operators map to the main rows, the way
 # a typist reaches them; function/arrow keys never yield a printable char anyway.
@@ -1948,8 +1950,8 @@ def _post_unicode_macos(ch: str, keycode: int = 0, flags: int = 0) -> None:
         cf.CFRelease(ev_up)
 
 
-def _post_chord_macos(ch: str, keycode: int, flags: int) -> None:
-    """Type ch on its real key, pressing and releasing Shift/Option around it.
+def _post_chord_macos(flags: int, post_key) -> None:
+    """Run post_key() with Shift/Option pressed and released around it.
 
     CoreGraphics turns a modifier keycode into a flagsChanged event, so the
     stream matches a physical keyboard: shift down, key, shift up.
@@ -1963,7 +1965,7 @@ def _post_chord_macos(ch: str, keycode: int, flags: int) -> None:
             _post_modifier_macos(kc, True, held)
             pressed.append((kc, flag))
             time.sleep(KEY_HOLD)
-    _post_unicode_macos(ch, keycode, flags)
+    post_key()
     for kc, flag in reversed(pressed):
         held &= ~flag
         time.sleep(KEY_HOLD)
@@ -1981,7 +1983,10 @@ def _post_modifier_macos(keycode: int, down: bool, flags: int) -> None:
 def press_char_macos(ch: str, soft_newline: bool = False) -> None:
     """Mac native implementation using CoreGraphics events."""
     if ch in ("\n", "\r"):
-        _post_keycode_macos(36, 0x20000 if soft_newline else 0)   # Enter / Shift+Enter
+        if soft_newline:    # Shift+Enter, with a real Shift press for remote desktops
+            _post_chord_macos(MAC_SHIFT_FLAG, lambda: _post_keycode_macos(36, MAC_SHIFT_FLAG))
+        else:
+            _post_keycode_macos(36)    # Enter
     elif ch == "\t":
         _post_keycode_macos(48)    # Tab
     elif ch == "\b":
@@ -1989,7 +1994,8 @@ def press_char_macos(ch: str, soft_newline: bool = False) -> None:
     else:
         chord = _layout_chord_macos(ch)
         if chord:
-            _post_chord_macos(ch, *chord)
+            keycode, flags = chord
+            _post_chord_macos(flags, lambda: _post_unicode_macos(ch, keycode, flags))
         else:
             _post_unicode_macos(ch)
 
