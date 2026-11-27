@@ -28,7 +28,6 @@
 //           USD_*_CENTS (see _bachs.js)
 
 const PAYSTACK = "https://api.paystack.co";
-const crypto = require("crypto");
 const { flw, configured: flwConfigured } = require("./_flw");
 const {
   bachs,
@@ -36,6 +35,13 @@ const {
   usdTiers,
   strictlyDescending,
 } = require("./_bachs");
+const { mintKey, POOL_FILTER } = require("./_keys");
+const {
+  sendEmail,
+  keysEmailHtml,
+  monthlyEmailHtml,
+  fmtDate,
+} = require("./_mail");
 
 // Fetch a charge from Flutterwave v4 by our merchant reference (HT-...) or by
 // charge id (chg_..., what the webhook carries). Returns the charge object or
@@ -194,26 +200,21 @@ async function verifyPayment(reference) {
 }
 
 // --- Key pool auto top-up ---------------------------------------------------
-// Same format and no-lookalikes alphabet as gen_licenses.py. After a claim
-// consumes keys, if fewer than KEY_POOL_MIN unsold ones remain we mint
-// KEY_POOL_BATCH fresh ones straight into Supabase, so the pool never runs
-// dry mid-sale. Auto-minted keys exist only in Supabase (see them under the
-// admin dashboard's "pool" filter). Never throws: a top-up failure must not
-// break the claim that triggered it; the "pool is EMPTY" alert stays as the
-// last-resort alarm.
-const KEY_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-
-function mintKey() {
-  const g = () => Array.from({ length: 5 },
-    () => KEY_ALPHABET[crypto.randomInt(KEY_ALPHABET.length)]).join("");
-  return `HT-${g()}-${g()}-${g()}`;
-}
-
-async function maybeTopUpPool() {
+// Runs before every claim (need = keys the order takes) and again after a sale.
+// If fewer than max(KEY_POOL_MIN, need) pool keys (unsold, unbound, never
+// activated) are left, it mints max(KEY_POOL_BATCH, the shortfall) fresh ones
+// straight into Supabase, so the pool never runs dry mid-sale, even when the
+// quarantine below has just emptied it. Auto-minted keys exist only in Supabase
+// (see them under the admin dashboard's "pool" filter). KEY_POOL_MIN=0 turns it
+// off. Returns { left, added, want } when it minted, else null. With quiet it
+// skips the owner's audit email so the caller can send it after the buyer's
+// key email. Never throws: a top-up failure must not break the claim that
+// triggered it; the "pool is EMPTY" alert stays as the last-resort alarm.
+async function maybeTopUpPool(need = 0, { quiet = false } = {}) {
   try {
     const min = parseInt(process.env.KEY_POOL_MIN || "10", 10);
     const batch = parseInt(process.env.KEY_POOL_BATCH || "50", 10);
-    if (min <= 0 || batch <= 0) return; // KEY_POOL_MIN=0 disables auto top-up
+    if (min <= 0 || batch <= 0) return null; // KEY_POOL_MIN=0 disables auto top-up
     const base = process.env.SUPABASE_URL.replace(/\/$/, "");
     const headers = {
       apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
@@ -221,28 +222,74 @@ async function maybeTopUpPool() {
       "Content-Type": "application/json",
     };
     const c = await fetch(
-      `${base}/rest/v1/licenses?select=key&sold=eq.false&status=eq.active&limit=1`,
+      `${base}/rest/v1/licenses?select=key&${POOL_FILTER}&limit=1`,
       { headers: { ...headers, Prefer: "count=exact" } },
     );
+    // A failed count must not read as an empty pool.
+    if (!c.ok) return null;
     const left = parseInt((c.headers.get("content-range") || "/0").split("/")[1], 10) || 0;
-    if (left >= min) return;
-    const keys = Array.from({ length: batch }, mintKey);
+    const want = Math.max(min, need);
+    if (left >= want) return null;
+    const keys = Array.from({ length: Math.max(batch, need - left) }, mintKey);
     const ins = await fetch(`${base}/rest/v1/licenses`, {
       method: "POST",
       headers: { ...headers, Prefer: "resolution=ignore-duplicates,return=representation" },
       body: JSON.stringify(keys.map((k) => ({ key: k }))),
     });
     const added = ins.ok ? ((await ins.json()) || []).length : 0;
-    try {
-      await sendEmail(
-        process.env.ADMIN_EMAIL || "me@rufaiahmed.com",
-        `Human Typer: key pool auto-topped up (+${added})`,
-        `<p>The unsold pool was down to <strong>${left}</strong> key(s), below the
-         ${min}-key threshold, so ${added} fresh key(s) were auto-generated and added.
+    const result = { left, added, want };
+    if (!quiet) await sendTopUpAudit(result);
+    return result;
+  } catch (_) {
+    return null;
+  }
+}
+
+// The owner's audit email for a top-up. Best-effort, never throws.
+async function sendTopUpAudit(t) {
+  if (!t) return;
+  try {
+    await sendEmail(
+      process.env.ADMIN_EMAIL || "me@rufaiahmed.com",
+      `Human Typer: key pool auto-topped up (+${t.added})`,
+      `<p>The unsold pool was down to <strong>${t.left}</strong> key(s), below the
+         ${t.want} needed, so ${t.added} fresh key(s) were auto-generated and added.
          They live in Supabase only; see the admin dashboard's "pool" filter.</p>`,
-      );
-    } catch (_) {}
+    );
   } catch (_) {}
+}
+
+// A key someone already activated was handed out by hand and must never be
+// sold, so before claiming, every unsold key that is bound to a device, or was
+// ever activated (an old unbind cleared the device but kept activated_at), is
+// taken out of the pool. Two plain filters, each best-effort with one retry;
+// never throws. Once supabase_keys_migration.sql has been run, the SQL claim
+// functions skip these keys too.
+const QUARANTINE_FILTERS = [
+  "sold=eq.false&device_id=not.is.null",
+  "sold=eq.false&activated_at=not.is.null",
+];
+
+async function quarantineBoundPoolKeys() {
+  const base = process.env.SUPABASE_URL.replace(/\/$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  for (const filter of QUARANTINE_FILTERS) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const r = await fetch(`${base}/rest/v1/licenses?${filter}`, {
+          method: "PATCH",
+          headers: {
+            apikey: key,
+            Authorization: `Bearer ${key}`,
+            "Content-Type": "application/json",
+            Prefer: "return=minimal",
+          },
+          body: JSON.stringify({ sold: true }),
+        });
+        if (r.ok) break;
+      } catch (_) {}
+    }
+  }
 }
 
 async function rpc(fn, args) {
@@ -269,77 +316,6 @@ const PAYMENT_ALERT_TO = [...new Set(
     .split(",").map((s) => s.trim()).filter(Boolean),
 )];
 
-async function sendEmail(to, subject, html) {
-  // rufaiahmed.com is an old .com with sender reputation; humantyper.online is a
-  // new .online domain that SpamAssassin (e.g. ImprovMX) scores as spam, so send
-  // from the .com by default and only fall back to the .online if it is rejected.
-  const primary =
-    process.env.MAIL_FROM || "Human Typer <keys@updates.rufaiahmed.com>";
-  const legacy = "Human Typer <keys@updates.humantyper.online>";
-  const post = (from) =>
-    fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ from, to, subject, html }),
-    });
-  let r = await post(primary);
-  if (!r.ok && primary !== legacy) {
-    // New sender domain not verified in Resend yet? Key delivery must not
-    // break: fall back to the old verified sender.
-    r = await post(legacy);
-  }
-  if (!r.ok) throw new Error(`resend failed: ${r.status} ${await r.text()}`);
-  return r.json();
-}
-
-const aiNoteHtml = `
-  <p style="background:#eef2ff;border:1px solid #d5ddff;border-radius:10px;padding:12px 14px">
-    <strong>AI rephrasing is included.</strong> In the app, open Settings, turn on AI,
-    and either use the free Gemini option or paste your own Claude/Gemini key. Then paste
-    text, hit Rephrase, and it rewrites it to read human before typing it out.
-  </p>`;
-
-function keysEmailHtml(keys, downloadUrl, hasAI) {
-  const many = keys.length > 1;
-  const keyBlocks = keys
-    .map(
-      (k) => `
-      <p style="font-size:20px;font-weight:700;letter-spacing:1px;background:#f4f4f8;
-                border:1px solid #e2e2ea;border-radius:10px;padding:14px 16px;text-align:center;
-                font-family:'JetBrains Mono',monospace;margin:10px 0">${k}</p>`,
-    )
-    .join("");
-  const teamNote = many
-    ? `<p style="background:#eef7f1;border:1px solid #cfe9da;border-radius:10px;padding:12px 14px">
-         Each key activates <strong>1 device</strong>. Share one key per teammate: one key, one machine.
-       </p>`
-    : "";
-  return `
-    <div style="font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:520px;margin:0 auto;color:#111">
-      <h2 style="margin:0 0 8px">Your Human Typer license ${many ? "keys" : "key"}</h2>
-      <p>Thank you for your purchase! ${
-        many
-          ? "Your " + keys.length + " lifetime keys are below."
-          : "Your lifetime key is below."
-      }</p>
-      ${keyBlocks}
-      ${teamNote}
-      ${hasAI ? aiNoteHtml : ""}
-      <ol style="line-height:1.7">
-        <li>Download the app: <a href="${downloadUrl}">${downloadUrl}</a></li>
-        <li>Open it and paste ${
-          many ? "a key" : "this key"
-        } on the activation screen (one-time, needs internet).</li>
-        <li>Activated for life on that machine. No subscription, ever.</li>
-      </ol>
-      <p style="color:#666;font-size:13px">Keep this email as your proof of purchase.
-         Need help or a new device? Reply here or contact me@rufaiahmed.com.</p>
-    </div>`;
-}
-
 // "NGN 15,000" / "USD 19.00" from the currency's smallest unit.
 function fmtMoney(minor, currency) {
   const cur = String(currency || "NGN").toUpperCase();
@@ -352,40 +328,6 @@ function fmtMoney(minor, currency) {
       maximumFractionDigits: 2,
     })
   );
-}
-
-function fmtDate(iso) {
-  try {
-    return new Date(iso).toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  } catch {
-    return String(iso || "");
-  }
-}
-
-function monthlyEmailHtml(key, expiresAt, downloadUrl, hasAI) {
-  return `
-    <div style="font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:520px;margin:0 auto;color:#111">
-      <h2 style="margin:0 0 8px">Your Human Typer ${hasAI ? "AI monthly pass" : "monthly pass"}</h2>
-      <p>Thank you! Your pass is active${
-        expiresAt ? ` until <strong>${fmtDate(expiresAt)}</strong>` : ""
-      }. Your key is below.</p>
-      <p style="font-size:20px;font-weight:700;letter-spacing:1px;background:#f4f4f8;
-                border:1px solid #e2e2ea;border-radius:10px;padding:14px 16px;text-align:center;
-                font-family:'JetBrains Mono',monospace;margin:10px 0">${key}</p>
-      ${hasAI ? aiNoteHtml : ""}
-      <ol style="line-height:1.7">
-        <li>Download the app: <a href="${downloadUrl}">${downloadUrl}</a></li>
-        <li>Open it and paste this key on the activation screen (needs internet).</li>
-        <li>It works on one device until your pass ends. To keep going, just pay again
-            with this same email and your access extends, no new key needed.</li>
-      </ol>
-      <p style="color:#666;font-size:13px">Keep this email as your proof of purchase.
-         Need help or a new device? Reply here or contact me@rufaiahmed.com.</p>
-    </div>`;
 }
 
 function paymentAlertHtml({ email, amountText, reference, planLine }) {
@@ -559,6 +501,9 @@ module.exports = async (req, res) => {
     // ===== Monthly-like: 30 days per payment, renews by paying again =====
     // monthly (₦2,000) and ai_monthly (₦5,000, AI unlocked) share this path.
     if (isMonthlyLike) {
+      await quarantineBoundPoolKeys();
+      // Quiet: its audit email goes out after the buyer's key email, not before.
+      const topUp = await maybeTopUpPool(1, { quiet: true });
       const claim = await rpc("claim_or_renew_monthly", {
         p_email: email,
         p_ref: verified.reference,
@@ -599,6 +544,7 @@ module.exports = async (req, res) => {
         hasAI ? "Your Human Typer AI monthly pass" : "Your Human Typer monthly pass",
         monthlyEmailHtml(key, expiresAt, downloadUrl, hasAI),
       );
+      await sendTopUpAudit(topUp);
       await maybeTopUpPool();
       res.status(200).json({
         ok: true, status: "key_sent", email, plan, count: 1, expires_at: expiresAt,
@@ -612,6 +558,9 @@ module.exports = async (req, res) => {
 
     // Atomically claim up to `qty` unsold keys. Idempotent per reference: a repeat
     // call for the same payment returns the SAME keys and never allocates more.
+    await quarantineBoundPoolKeys();
+    // Quiet: its audit email goes out after the buyer's key email, not before.
+    const topUp = await maybeTopUpPool(qty, { quiet: true });
     const claim = await rpc("claim_keys", {
       p_email: email,
       p_ref: verified.reference,
@@ -664,6 +613,7 @@ module.exports = async (req, res) => {
           ? "Your Human Typer AI Lifetime key"
           : "Your Human Typer license key";
     await sendEmail(email, subject, keysEmailHtml(keys, downloadUrl, hasAI));
+    await sendTopUpAudit(topUp);
     await maybeTopUpPool();
     res.status(200).json({ ok: true, status: "key_sent", email, plan, count });
   } catch (err) {

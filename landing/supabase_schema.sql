@@ -1,5 +1,8 @@
 -- Human Typer licensing — run this once in the Supabase SQL editor.
--- AFTER this, also run supabase_ai_migration.sql to add the AI plans/override.
+-- AFTER this, also run supabase_ai_migration.sql to add the AI plans/override,
+-- and after that supabase_keys_migration.sql (keeps device-bound keys out of the
+-- sale pool). On a database that is already live, run only the migration files,
+-- not this file again: it brings back the old 3-arg claim functions.
 --
 -- All access is via the functions below, called by the Vercel API using the
 -- SERVICE_ROLE key (which bypasses RLS). The table itself is locked down (RLS on,
@@ -61,10 +64,15 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'expired',
                               'plan', r.plan, 'expires_at', r.expires_at);
   end if;
+  -- An activated key has been handed to someone, so it leaves the sale pool.
   if r.device_id is null then
-    update public.licenses set device_id = p_device, activated_at = now() where key = r.key;
+    update public.licenses set device_id = p_device, activated_at = now(), sold = true
+      where key = r.key;
     return jsonb_build_object('ok', true, 'plan', r.plan, 'expires_at', r.expires_at);
   elsif r.device_id = p_device then
+    if not r.sold then
+      update public.licenses set sold = true where key = r.key;
+    end if;
     return jsonb_build_object('ok', true, 'plan', r.plan, 'expires_at', r.expires_at);
   else
     return jsonb_build_object('ok', false, 'reason', 'in_use');
@@ -82,8 +90,9 @@ begin
   select key into k from public.licenses where payment_ref = p_ref limit 1;
   if k is not null then return jsonb_build_object('key', k, 'new', false); end if;
 
+  -- A key that is bound, or was ever activated, was handed to someone: never sold.
   select key into k from public.licenses
-    where sold = false and status = 'active'
+    where sold = false and status = 'active' and device_id is null and activated_at is null
     order by created_at limit 1 for update skip locked;
   if k is null then return jsonb_build_object('key', null, 'new', false); end if;
 
@@ -119,7 +128,7 @@ begin
   -- Grab up to n available keys, skipping rows another transaction holds.
   with picked as (
     select key from public.licenses
-      where sold = false and status = 'active'
+      where sold = false and status = 'active' and device_id is null and activated_at is null
       order by created_at
       limit n
       for update skip locked
@@ -177,7 +186,8 @@ begin
   if k is null then
     -- First monthly purchase: claim a fresh unsold key as this buyer's monthly key.
     select l.key into k from public.licenses l
-      where l.sold = false and l.status = 'active'
+      where l.sold = false and l.status = 'active' and l.device_id is null
+        and l.activated_at is null
       order by l.created_at limit 1 for update skip locked;
     if k is null then
       return jsonb_build_object('key', null, 'new', false, 'expires_at', null);  -- pool empty

@@ -10,6 +10,8 @@
 --      sub-second window just retries via the provider webhook.
 --   3. activate_key returns "ai": the effective AI flag the desktop app gates on.
 --
+-- Then run supabase_keys_migration.sql (keeps device-bound keys out of the pool).
+--
 -- Effective AI = coalesce(ai_enabled, plan in ('ai_monthly','ai_lifetime')).
 -- So: ai_enabled=true grants AI to any key (your own machine, a comp);
 --     ai_enabled=false revokes AI even from an AI plan; null = follow the plan.
@@ -57,9 +59,11 @@ begin
     for update;
 
   if k is null then
-    -- First purchase of this plan: claim a fresh unsold key.
+    -- First purchase of this plan: claim a fresh unsold key. A key that
+    -- is bound, or was ever activated, was handed to someone: never sold.
     select l.key into k from public.licenses l
-      where l.sold = false and l.status = 'active'
+      where l.sold = false and l.status = 'active' and l.device_id is null
+        and l.activated_at is null
       order by l.created_at limit 1 for update skip locked;
     if k is null then
       return jsonb_build_object('key', null, 'new', false, 'expires_at', null); -- pool empty
@@ -102,7 +106,7 @@ begin
 
   with picked as (
     select key from public.licenses
-      where sold = false and status = 'active'
+      where sold = false and status = 'active' and device_id is null and activated_at is null
       order by created_at limit n for update skip locked
   ), claimed as (
     update public.licenses l
@@ -134,10 +138,15 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'expired',
                               'plan', r.plan, 'expires_at', r.expires_at, 'ai', v_ai);
   end if;
+  -- An activated key has been handed to someone, so it leaves the sale pool.
   if r.device_id is null then
-    update public.licenses set device_id = p_device, activated_at = now() where key = r.key;
+    update public.licenses set device_id = p_device, activated_at = now(), sold = true
+      where key = r.key;
     return jsonb_build_object('ok', true, 'plan', r.plan, 'expires_at', r.expires_at, 'ai', v_ai);
   elsif r.device_id = p_device then
+    if not r.sold then
+      update public.licenses set sold = true where key = r.key;
+    end if;
     return jsonb_build_object('ok', true, 'plan', r.plan, 'expires_at', r.expires_at, 'ai', v_ai);
   else
     return jsonb_build_object('ok', false, 'reason', 'in_use');
