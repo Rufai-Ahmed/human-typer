@@ -6,18 +6,47 @@
 //   SUPABASE_SERVICE_ROLE_KEY  (SECRET — service_role)
 //
 // Request:  POST { key, device_id }
-// Response: { ok: true }  or  { ok: false, reason: "invalid" | "revoked" | "in_use" }
+// Response: { ok: true }  or  { ok: false, reason: "invalid" | "revoked" | "in_use" | "expired" }
+//           or a bare null when the server itself cannot answer (see serverTrouble)
 
-async function rpc(fn, args) {
+async function rpc(fn, args, opts = {}) {
     const base = process.env.SUPABASE_URL.replace(/\/$/, "");
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
     const r = await fetch(`${base}/rest/v1/rpc/${fn}`, {
         method: "POST",
         headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         body: JSON.stringify(args),
+        signal: opts.signal,
     });
     if (!r.ok) throw new Error(`supabase rpc ${fn} failed: ${r.status} ${await r.text()}`);
     return r.json();
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 3 attempts in all, so a brief Supabase hiccup does not reach the app. Each
+// attempt gives up after 2.5s: 3 x 2.5s plus the waits is about 8.35s, inside
+// the platform's 10s limit (a 504 from that limit reads as an invalid key in
+// released app builds).
+async function activateWithRetry(args) {
+    const waits = [250, 600];
+    for (let i = 0; ; i++) {
+        try {
+            return await rpc("activate_key", args, { signal: AbortSignal.timeout(2500) });
+        } catch (err) {
+            if (i >= waits.length) throw err;
+            await sleep(waits[i]);
+        }
+    }
+}
+
+// Every released app build treats any JSON error answer as an invalid key and
+// deletes the saved activation on launch. A null body makes those builds take
+// their "could not reach the server" path, which keeps the user activated.
+function serverTrouble(res, cause) {
+    console.error("activate: server trouble:", cause);
+    res.setHeader("Content-Type", "application/json");
+    res.status(200).send("null");
 }
 
 module.exports = async (req, res) => {
@@ -29,7 +58,7 @@ module.exports = async (req, res) => {
     if (req.method !== "POST") { res.status(405).json({ ok: false, reason: "method" }); return; }
 
     for (const v of ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]) {
-        if (!process.env[v]) { res.status(500).json({ ok: false, reason: "server_misconfigured" }); return; }
+        if (!process.env[v]) { serverTrouble(res, `missing env ${v}`); return; }
     }
 
     let body = req.body;
@@ -39,11 +68,15 @@ module.exports = async (req, res) => {
     const device = (body.device_id || "").toString().trim();
     if (!key || !device) { res.status(400).json({ ok: false, reason: "missing_fields" }); return; }
 
+    let result;
     try {
-        const result = await rpc("activate_key", { p_key: key, p_device: device });
-        // activate_key returns { ok, reason?, plan?, expires_at? }
-        res.status(200).json(result && typeof result === "object" ? result : { ok: false, reason: "invalid" });
+        result = await activateWithRetry({ p_key: key, p_device: device });
     } catch (err) {
-        res.status(502).json({ ok: false, reason: "upstream_error" });
+        serverTrouble(res, err);
+        return;
     }
+    // activate_key returns { ok, reason?, plan?, expires_at? }
+    const out = result && typeof result === "object" ? result : { ok: false, reason: "invalid" };
+    if (!out.ok) console.warn("activate refused", out.reason, key.slice(-5));
+    res.status(200).json(out);
 };
