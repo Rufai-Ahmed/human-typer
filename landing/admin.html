@@ -9,7 +9,7 @@
     <link rel="icon" href="/icon.png">
     <link rel="stylesheet" href="styles.css">
     <style>
-        .adm{ max-width:1080px; margin:0 auto; padding:48px 24px 96px; }
+        .adm{ max-width:1320px; margin:0 auto; padding:48px 24px 96px; }
         .adm h1{ font-family:var(--font-mono); font-size:1.4rem; margin-bottom:6px; }
         .adm-sub{ color:var(--text-muted); font-size:var(--text-sm); margin-bottom:28px; }
         .adm section{ margin-top:36px; }
@@ -21,11 +21,26 @@
         .tile span{ color:var(--text-subtle); font-size:var(--text-eyebrow); text-transform:uppercase; letter-spacing:0.06em; }
         .tile.acc b{ color:var(--accent); }
         .bar{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
-        .bar input[type=text], .bar input[type=password], textarea{
+        .bar input[type=text], .bar input[type=password], .bar input[type=email],
+        .bar input[type=number], .bar select, #login input, textarea{
             background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
             color:var(--text); font-family:var(--font-mono); font-size:var(--text-sm);
             padding:9px 12px; min-width:260px; }
+        .bar input[type=number]{ min-width:0; width:96px; }
+        .bar select{ min-width:180px; cursor:pointer; }
+        .bar input:focus, .bar select:focus, textarea:focus{ outline:none; border-color:var(--accent); }
         textarea{ width:100%; min-height:110px; }
+        .bar .fld, .bar .chk{ display:inline-flex; align-items:center; gap:8px; color:var(--text-muted);
+                              font-family:var(--font-mono); font-size:var(--text-sm); }
+        .bar .chk{ cursor:pointer; }
+        .bar .chk input{ accent-color:var(--accent); width:16px; height:16px; margin:0; }
+        .gen-hint{ color:var(--text-muted); font-size:var(--text-sm); margin:0 0 12px; }
+        .gen-out{ background:var(--surface-1); border:1px solid var(--border); border-radius:10px;
+                  padding:14px; font-family:var(--font-mono); font-size:var(--text-sm);
+                  color:var(--text-secondary); overflow-wrap:anywhere; }
+        .gen-out textarea{ min-width:0; min-height:72px; margin:10px 0; resize:vertical; }
+        .gen-out .warn{ color:var(--warning-400); }
+        .row-act button.sure, .row-act button.sure:hover{ color:var(--danger-400); border-color:var(--danger-400); }
         .chip{ background:var(--surface-1); border:1px solid var(--border); border-radius:999px;
                color:var(--text-muted); font-family:var(--font-mono); font-size:var(--text-eyebrow);
                padding:6px 12px; cursor:pointer; }
@@ -41,7 +56,15 @@
                    letter-spacing:0.06em; padding:10px 12px; border-bottom:1px solid var(--border); white-space:nowrap; }
         .adm-t td{ padding:9px 12px; border-bottom:1px solid var(--border); color:var(--text-secondary); white-space:nowrap; }
         .adm-t tr:last-child td{ border-bottom:none; }
+        @media (min-width:900px){
+            #lic-t th:last-child, #lic-t td:last-child{ position:sticky; right:0; background:var(--bg);
+                box-shadow:-1px 0 0 var(--border), inset 0 -1px 0 var(--border); }
+            #lic-t tr:last-child td:last-child{ box-shadow:-1px 0 0 var(--border); }
+        }
         .adm-t .k{ color:var(--text); user-select:all; }
+        .adm-t .k-mask{ color:var(--text-muted); user-select:none; cursor:help; }
+        .adm-t .ref{ display:inline-block; max-width:22ch; overflow:hidden; text-overflow:ellipsis;
+                     white-space:nowrap; vertical-align:bottom; }
         .st-active{ color:var(--accent); } .st-revoked{ color:var(--danger-400); }
         .row-act{ display:flex; gap:6px; }
         .row-act button{ background:none; border:1px solid var(--border); border-radius:6px;
@@ -92,6 +115,7 @@
                 <span class="chip" data-f="monthly">monthly</span>
                 <span class="chip" data-f="lifetime">lifetime</span>
                 <span class="chip" data-f="pool">pool</span>
+                <span class="chip" data-f="double">double-sold</span>
                 <span class="chip" data-f="revoked">revoked</span>
             </div>
             <div class="tbl-wrap"><table class="adm-t" id="lic-t">
@@ -119,10 +143,36 @@
         </section>
 
         <section>
-            <h2>▸ Add keys to the pool</h2>
+            <h2>▸ Generate keys</h2>
+            <div class="bar">
+                <label class="fld"><input id="gen-count" type="number" min="1" max="500" value="50" inputmode="numeric"> keys</label>
+                <span class="chip on" data-dest="pool">add to the sale pool</span>
+                <span class="chip" data-dest="issue">give to a buyer</span>
+            </div>
+            <p id="gen-hint" class="gen-hint">Checkout emails pool keys to buyers by itself. Never copy a pool key to give to someone.</p>
+            <div id="gen-buyer" class="bar hidden">
+                <select id="gen-plan" aria-label="plan">
+                    <option value="ai_lifetime" selected>AI Lifetime</option>
+                    <option value="ai_monthly">AI Monthly</option>
+                    <option value="lifetime">Lifetime</option>
+                    <option value="monthly">Monthly</option>
+                </select>
+                <label id="gen-days-wrap" class="fld hidden"><input id="gen-days" type="number" min="1" max="365" value="30" inputmode="numeric"> days</label>
+                <input id="gen-email" type="email" placeholder="buyer email (optional)" autocomplete="off">
+                <input id="gen-label" type="text" placeholder="label (optional)" maxlength="24" autocomplete="off">
+                <label class="chk"><input id="gen-send" type="checkbox"> email the key to the buyer</label>
+            </div>
+            <div class="bar">
+                <button id="gen-btn" class="btn-a primary">Generate</button>
+            </div>
+            <div id="gen-out" class="gen-out hidden"></div>
+        </section>
+
+        <section>
+            <h2>▸ Paste keys into the pool</h2>
             <textarea id="new-keys" placeholder="Paste new license keys, one per line (generated with gen_licenses.py)"></textarea>
             <div class="bar" style="margin-top:10px">
-                <button id="add-btn" class="btn-a primary">Add keys</button>
+                <button id="add-btn" class="btn-a">Add keys</button>
             </div>
         </section>
     </div>
@@ -136,6 +186,22 @@
             (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
         let filter = 'all';
         let licPage = 0, payPage = 0;
+        const TIP = {
+            unbind: 'Frees the key. The next device to activate or launch with it takes it.',
+            revoke: "Blocks the key at the app's next online check.",
+            pool: 'Pool key. Checkout emails these by itself. Use give out to reserve it before sending it to anyone.',
+            reserve: 'Takes this key out of the sale pool so it is safe to send.',
+            replace: 'Use when someone else already holds this key. Emails the buyer a fresh key; this one stays with the device that has it.',
+        };
+        const CONFIRM = new Set(['revoke', 'unbind', 'reserve', 'replace']);
+        // HT-7KQ2M-·····-·····: a pool key is shown only far enough to recognise it.
+        function maskKey(k) {
+            const s = String(k == null ? '' : k);
+            const parts = s.split('-');
+            if (parts.length < 2) return s.slice(0, 4) + '·'.repeat(Math.max(s.length - 4, 0));
+            const keep = parts[0] === 'HT' && parts.length > 2 ? 2 : 1;
+            return parts.map((p, i) => (i < keep ? p : '·'.repeat(p.length))).join('-');
+        }
 
         function renderPager(prefix, page, pageSize, total, count) {
             const info = $('#' + prefix + '-info');
@@ -146,14 +212,42 @@
             $('#' + prefix + '-next').disabled = (page + 1) * pageSize >= total;
         }
 
-        const msg = (text, err) => {
+        const msg = (text, err, ms) => {
             const el = $('#msg');
             el.textContent = text;
             el.className = err ? 'err' : '';
             el.style.display = 'block';
             clearTimeout(msg.t);
-            msg.t = setTimeout(() => { el.style.display = 'none'; }, 4000);
+            msg.t = setTimeout(() => { el.style.display = 'none'; }, ms || 4000);
         };
+
+        async function copyText(t) {
+            try { await navigator.clipboard.writeText(t); return true; } catch (_) { return false; }
+        }
+
+        // Two-click confirm: the first click arms the button for 4 seconds; a
+        // second click at least 500ms later goes ahead, so a double-click never
+        // confirms by itself.
+        function disarm(b) {
+            clearTimeout(b.sureTimer);
+            delete b.dataset.sure;
+            b.textContent = b.dataset.label;
+            b.classList.remove('sure');
+        }
+        function armed(b) {
+            const now = Date.now();
+            if (!b.dataset.sure) {
+                b.dataset.sure = String(now);
+                b.dataset.label = b.textContent;
+                b.textContent = 'sure?';
+                b.classList.add('sure');
+                b.sureTimer = setTimeout(() => disarm(b), 4000);
+                return false;
+            }
+            if (now - Number(b.dataset.sure) < 500) return false;
+            disarm(b);
+            return true;
+        }
 
         const api = (payload) => fetch('/api/admin', {
             method: 'POST',
@@ -226,24 +320,32 @@
             if (!rows.length && page > 0) { licPage = 0; return loadLicenses(); }
             renderPager('lic', page, pageSize, total, rows.length);
             $('#lic-t tbody').innerHTML = rows.map((r) => {
+                const inPool = !r.sold && r.status === 'active' && !r.device_id && !r.activated_at;
                 const acts = [];
+                if (inPool) acts.push('<button data-a="reserve" data-k="' + esc(r.key) + '" title="' + esc(TIP.reserve) + '">give out</button>');
                 if (r.email) acts.push('<button data-a="resend" data-k="' + esc(r.key) + '">resend</button>');
-                if (r.device_id) acts.push('<button data-a="unbind" data-k="' + esc(r.key) + '">unbind</button>');
+                if (r.device_id) acts.push('<button data-a="unbind" data-k="' + esc(r.key) + '" title="' + esc(TIP.unbind) + '">unbind</button>');
+                if (r.sold && r.email && r.device_id) acts.push('<button data-a="replace" data-k="' + esc(r.key) + '" title="' + esc(TIP.replace) + '">new key</button>');
                 if ((r.plan === 'monthly' || r.plan === 'ai_monthly') && r.sold) acts.push('<button data-a="extend" data-k="' + esc(r.key) + '">+30d</button>');
                 // AI override: auto (follow plan) -> on -> off -> auto. Label shows current.
                 const aiState = r.ai_enabled === true ? 'on' : r.ai_enabled === false ? 'off' : 'auto';
                 acts.push('<button data-a="ai" data-k="' + esc(r.key) + '" data-ai="' + aiState + '">AI: ' + aiState + '</button>');
                 acts.push(r.status === 'revoked'
                     ? '<button data-a="restore" data-k="' + esc(r.key) + '">restore</button>'
-                    : '<button data-a="revoke" data-k="' + esc(r.key) + '">revoke</button>');
+                    : '<button data-a="revoke" data-k="' + esc(r.key) + '" title="' + esc(TIP.revoke) + '">revoke</button>');
+                const ref = r.payment_ref || (r.sold ? 'hand-out' : '');
+                const tag = r.sold || r.status !== 'active' ? ''
+                    : r.device_id || r.activated_at ? ' · hand-out' : ' · pool';
                 return '<tr>'
-                    + '<td class="k">' + esc(r.key) + '</td>'
-                    + '<td class="st-' + esc(r.status) + '">' + esc(r.status) + (r.sold ? '' : ' · pool') + '</td>'
+                    + (inPool
+                        ? '<td class="k-mask" title="' + esc(TIP.pool) + '">' + esc(maskKey(r.key)) + '</td>'
+                        : '<td class="k">' + esc(r.key) + '</td>')
+                    + '<td class="st-' + esc(r.status) + '">' + esc(r.status) + tag + '</td>'
                     + '<td>' + esc(r.plan) + '</td>'
                     + '<td>' + esc(r.email || '—') + '</td>'
                     + '<td>' + fmtDate(r.expires_at) + '</td>'
-                    + '<td>' + (r.device_id ? 'bound' : '—') + '</td>'
-                    + '<td>' + esc((r.payment_ref || '').slice(0, 18)) + '</td>'
+                    + '<td>' + (r.device_id ? 'bound' + (r.activated_at ? ' ' + fmtDate(r.activated_at) : '') : '—') + '</td>'
+                    + '<td><span class="ref" title="' + esc(r.payment_ref || '') + '">' + esc(ref) + '</span></td>'
                     + '<td><div class="row-act">' + acts.join('') + '</div></td>'
                     + '</tr>';
             }).join('') || '<tr><td colspan="8">Nothing matches.</td></tr>';
@@ -267,8 +369,8 @@
         $('#search-btn').addEventListener('click', () => { licPage = 0; loadLicenses().catch(oops); });
         $('#q').addEventListener('keydown', (e) => { if (e.key === 'Enter') { licPage = 0; loadLicenses().catch(oops); } });
 
-        document.querySelectorAll('.chip').forEach((c) => c.addEventListener('click', () => {
-            document.querySelectorAll('.chip').forEach((x) => x.classList.remove('on'));
+        document.querySelectorAll('.chip[data-f]').forEach((c) => c.addEventListener('click', () => {
+            document.querySelectorAll('.chip[data-f]').forEach((x) => x.classList.remove('on'));
             c.classList.add('on');
             filter = c.getAttribute('data-f');
             licPage = 0;
@@ -284,7 +386,7 @@
             const b = e.target.closest('button[data-a]');
             if (!b) return;
             const a = b.getAttribute('data-a'), k = b.getAttribute('data-k');
-            if ((a === 'revoke') && !confirm('Revoke ' + k + '? The app blocks it on the next online check.')) return;
+            if (CONFIRM.has(a) && !armed(b)) return;
             try {
                 const payload = { action: a, key: k };
                 if (a === 'extend') payload.days = 30;
@@ -295,12 +397,118 @@
                     payload.ai = cur === 'auto' ? 'on' : cur === 'on' ? 'off' : 'auto';
                 }
                 const d = await api(payload);
-                msg(a === 'resend' ? 'Emailed ' + d.sent_to
-                    : a === 'ai' ? ('AI set to ' + payload.ai + ' (takes effect on the app’s next launch)')
-                    : a + ' done');
+                if (a === 'reserve') {
+                    const copied = await copyText(d.row.key);
+                    msg('Reserved ' + d.row.key + (copied ? ' (copied)' : '') + '. It is now safe to send.', false, 10000);
+                } else if (a === 'replace') {
+                    const copied = (await copyText(d.key)) ? ' (copied)' : '';
+                    msg((d.emailed
+                        ? 'New key ' + d.key + ' emailed to ' + d.email + copied + '.'
+                        : 'New key ' + d.key + ' created' + copied + '. Email failed, send it yourself.')
+                        + (d.old_restored ? ' The old key is now a lifetime hand-out for the device that has it.' : ''), false, 10000);
+                    loadPayments().catch(oops);
+                } else {
+                    msg(a === 'resend' ? 'Emailed ' + d.sent_to
+                        : a === 'ai' ? ('AI set to ' + payload.ai + ' (takes effect on the app’s next launch)')
+                        : a + ' done');
+                }
                 loadLicenses().catch(oops);
                 refreshStats().catch(oops);
             } catch (err) { oops(err); }
+        });
+
+        // ---- Generate keys ----
+        const GEN_HINT = {
+            pool: 'Checkout emails pool keys to buyers by itself. Never copy a pool key to give to someone.',
+            issue: 'For bank-transfer buyers, replacements and gifts. These keys never enter the sale pool.',
+        };
+        const PLAN_LABEL = { ai_lifetime: 'AI Lifetime', ai_monthly: 'AI Monthly', lifetime: 'Lifetime', monthly: 'Monthly' };
+        let genDest = 'pool';
+
+        function setGenDest(d) {
+            if (d !== genDest) {
+                const cnt = $('#gen-count');
+                const v = cnt.value.trim();
+                // A pool-sized count must never carry over into keys for one buyer.
+                if (d === 'issue') cnt.value = 1;
+                else if (!v || v === '1') cnt.value = 50;
+                $('#gen-out').classList.add('hidden');
+            }
+            genDest = d;
+            document.querySelectorAll('.chip[data-dest]').forEach((x) =>
+                x.classList.toggle('on', x.getAttribute('data-dest') === d));
+            $('#gen-hint').textContent = GEN_HINT[d];
+            $('#gen-buyer').classList.toggle('hidden', d !== 'issue');
+        }
+
+        function syncGenDays() {
+            const p = $('#gen-plan').value;
+            $('#gen-days-wrap').classList.toggle('hidden', !(p === 'monthly' || p === 'ai_monthly'));
+        }
+
+        function showGenResult(d) {
+            const out = $('#gen-out');
+            out.classList.remove('hidden');
+            if (d.dest === 'pool') {
+                out.innerHTML = esc(d.inserted + (d.inserted === 1 ? ' key' : ' keys') + ' added to the sale pool.');
+                return;
+            }
+            const n = d.keys.length;
+            const parts = [n + ' ' + (PLAN_LABEL[d.plan] || d.plan) + (n === 1 ? ' key' : ' keys')];
+            if (d.expires_at) parts.push('expires ' + fmtDate(d.expires_at));
+            parts.push(d.email ? 'for ' + d.email : 'no buyer email');
+            parts.push('ref ' + d.payment_ref);
+            let line = esc(parts.join(', ')) + '. ';
+            if (d.emailed) line += esc('Emailed to ' + d.email + '.');
+            else if (d.email_error) line += '<span class="warn">' + esc('Not emailed: ' + d.email_error + '.') + '</span>';
+            else line += esc('Not emailed.');
+            out.innerHTML = '<div>' + line + '</div>'
+                + '<textarea id="gen-keys" readonly rows="' + Math.min(n, 8) + '">' + esc(d.keys.join('\n')) + '</textarea>'
+                + '<button id="gen-copy" class="btn-a">Copy</button>';
+        }
+
+        document.querySelectorAll('.chip[data-dest]').forEach((c) =>
+            c.addEventListener('click', () => setGenDest(c.getAttribute('data-dest'))));
+        $('#gen-plan').addEventListener('change', syncGenDays);
+        syncGenDays();
+
+        $('#gen-btn').addEventListener('click', async () => {
+            const btn = $('#gen-btn');
+            const payload = { action: 'generate', dest: genDest, count: parseInt($('#gen-count').value, 10) || 1 };
+            if (genDest === 'issue') {
+                payload.plan = $('#gen-plan').value;
+                payload.days = parseInt($('#gen-days').value, 10) || 30;
+                payload.email = $('#gen-email').value.trim();
+                payload.label = $('#gen-label').value.trim();
+                payload.send = $('#gen-send').checked;
+            }
+            btn.disabled = true;
+            try {
+                const d = await api(payload);
+                showGenResult(d);
+                if (d.dest === 'issue') {
+                    // A second click must not issue and email a duplicate to the same buyer.
+                    $('#gen-email').value = '';
+                    $('#gen-label').value = '';
+                    $('#gen-send').checked = false;
+                }
+                refreshStats().catch(oops);
+                loadLicenses().catch(oops);
+            } catch (err) { oops(err); }
+            finally { btn.disabled = false; }
+        });
+
+        $('#gen-out').addEventListener('click', async (e) => {
+            if (!e.target.closest('#gen-copy')) return;
+            const ta = $('#gen-keys');
+            try {
+                await navigator.clipboard.writeText(ta.value);
+                msg('Copied ' + ta.value.split('\n').length + ' key(s)');
+            } catch (_) {
+                ta.focus();
+                ta.select();
+                msg('Selected; press Cmd+C or Ctrl+C to copy');
+            }
         });
 
         $('#add-btn').addEventListener('click', async () => {

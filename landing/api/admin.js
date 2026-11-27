@@ -6,16 +6,40 @@
 //
 // POST { action, ...args } -> JSON. Actions:
 //   stats                 counts + rough revenue
-//   licenses  {q, filter} search/list licenses (max 100)
+//   licenses  {q, filter} search/list licenses (max 100); filter "double" lists
+//                         monthly sales whose key was activated before the payment
 //   payments              recent monthly-payment ledger
 //   revoke    {key}       status='revoked' (kills next online check)
 //   restore   {key}       status='active'
-//   unbind    {key}       device_id=null (move buyer to a new machine)
+//   unbind    {key}       device_id=null (move buyer to a new machine); the key
+//                         stays sold so it never drops back into the sale pool
 //   extend    {key, days} push a monthly key's expiry (stacks like a renewal)
 //   resend    {key}       re-email the key to its stored buyer email
 //   addkeys   {keys}      bulk-insert fresh pool keys (duplicates ignored)
+//   generate  {count, dest, plan, days, email, label, send}
+//                         mint keys: dest "pool" adds them to the sale pool;
+//                         dest "issue" makes sold keys for one buyer (bank
+//                         transfer, replacement, gift) and can email them
+//   reserve   {key}       take one pool key out of the sale pool (sold, MANUAL
+//                         ref) so the owner can send it to someone safely
+//   replace   {key}       someone else holds this buyer's key: move the buyer,
+//                         ref and payments to a fresh key and email it to them
 
 const crypto = require("crypto");
+const { KEY_ALPHABET, mintKey, POOL_FILTER } = require("./_keys");
+const { sendEmail, keysEmailHtml, monthlyEmailHtml } = require("./_mail");
+
+const MONTHLY_PLANS = ["monthly", "ai_monthly"];
+const ISSUE_PLANS = ["monthly", "ai_monthly", "lifetime", "ai_lifetime"];
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; // same check as checkout.js
+
+// Payment ref for keys given out by hand: MANUAL-[label-]YYYYMMDD-XXXXXX.
+function manualRef(label) {
+  const day = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const tail = Array.from({ length: 6 },
+    () => KEY_ALPHABET[crypto.randomInt(KEY_ALPHABET.length)]).join("");
+  return `MANUAL-${label ? label + "-" : ""}${day}-${tail}`;
+}
 
 const same = (x, y) =>
   crypto.timingSafeEqual(
@@ -86,10 +110,65 @@ async function pg(path, opts = {}) {
     ...opts,
     headers: { ...HEADERS(), ...(opts.headers || {}) },
   });
-  if (!r.ok) throw new Error(`supabase ${path}: ${r.status} ${await r.text()}`);
+  if (!r.ok) {
+    const text = await r.text();
+    throw Object.assign(new Error(`supabase ${path}: ${r.status} ${text}`), { status: r.status, text });
+  }
   const text = await r.text();
   return { body: text ? JSON.parse(text) : null, headers: r.headers };
 }
+
+// PostgREST answers 404 / PGRST202 for a function that does not exist, which
+// here means supabase_keys_migration.sql has not been run yet.
+async function rpcCall(fn, args) {
+  try {
+    const { body } = await pg(`/rpc/${fn}`, { method: "POST", body: JSON.stringify(args || {}) });
+    return body;
+  } catch (err) {
+    if (err && (err.status === 404 || /PGRST202/.test(err.text || ""))) {
+      throw oops("run supabase_keys_migration.sql in Supabase first");
+    }
+    throw err;
+  }
+}
+
+// Emails keys with the same templates and subjects checkout uses: lifetime-like
+// keys in one email, each monthly key in its own (600ms apart, so a batch does
+// not trip the mail provider's rate limit). On a failure the error carries how
+// many emails went out.
+async function emailKeys(to, keys, plan, expiresAt) {
+  const dl = process.env.DOWNLOAD_URL || "https://www.humantyper.online/#download";
+  const hasAI = plan === "ai_monthly" || plan === "ai_lifetime";
+  if (!MONTHLY_PLANS.includes(plan)) {
+    const subject =
+      keys.length > 1
+        ? `Your ${keys.length} Human Typer license keys`
+        : hasAI
+          ? "Your Human Typer AI Lifetime key"
+          : "Your Human Typer license key";
+    await sendEmail(to, subject, keysEmailHtml(keys, dl, hasAI));
+    return;
+  }
+  let sent = 0;
+  try {
+    for (const k of keys) {
+      if (sent) await sleep(600);
+      await sendEmail(
+        to,
+        hasAI ? "Your Human Typer AI monthly pass" : "Your Human Typer monthly pass",
+        monthlyEmailHtml(k, expiresAt, dl, hasAI),
+      );
+      sent += 1;
+    }
+  } catch (err) {
+    throw Object.assign(err, { sent, total: keys.length });
+  }
+}
+
+const sendFailText = (err) =>
+  err && err.total > 1
+    ? `sent ${err.sent} of ${err.total} emails; copy the keys and send the rest yourself`
+    : "could not send the email; copy the key and send it yourself";
 
 // Row count without fetching rows (content-range: "0-24/123").
 async function count(table, filter) {
@@ -99,23 +178,6 @@ async function count(table, filter) {
   });
   const range = headers.get("content-range") || "/0";
   return parseInt(range.split("/")[1], 10) || 0;
-}
-
-async function sendEmail(to, subject, html) {
-  const primary = process.env.MAIL_FROM || "Human Typer <keys@updates.rufaiahmed.com>";
-  const legacy = "Human Typer <keys@updates.humantyper.online>";
-  const post = (from) =>
-    fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ from, to, subject, html }),
-    });
-  let r = await post(primary);
-  if (!r.ok && primary !== legacy) r = await post(legacy);
-  if (!r.ok) throw new Error(`resend failed: ${r.status} ${await r.text()}`);
 }
 
 const keyBlock = (k) => `
@@ -174,11 +236,12 @@ module.exports = async (req, res) => {
       const soon = new Date(Date.now() + 7 * 86400000).toISOString();
       const [pool, sold, lifetimeSold, monthlyActive, monthlyExpiring, revoked, activated, monthlyPayments] =
         await Promise.all([
-          count("licenses", "sold=eq.false&status=eq.active"),
+          count("licenses", POOL_FILTER),
           count("licenses", "sold=eq.true"),
-          count("licenses", "sold=eq.true&plan=eq.lifetime"),
-          count("licenses", `plan=eq.monthly&status=eq.active&expires_at=gt.${now()}`),
-          count("licenses", `plan=eq.monthly&status=eq.active&expires_at=gt.${now()}&expires_at=lt.${soon}`),
+          // Real sales only: hand-outs have no ref, keys given out by hand a MANUAL- one.
+          count("licenses", "sold=eq.true&plan=eq.lifetime&payment_ref=not.is.null&payment_ref=not.like.MANUAL-*"),
+          count("licenses", `plan=in.(monthly,ai_monthly)&status=eq.active&expires_at=gt.${now()}`),
+          count("licenses", `plan=in.(monthly,ai_monthly)&status=eq.active&expires_at=gt.${now()}&expires_at=lt.${soon}`),
           count("licenses", "status=eq.revoked"),
           count("licenses", "device_id=not.is.null"),
           count("license_payments", ""),
@@ -200,16 +263,29 @@ module.exports = async (req, res) => {
       const q = raw.replace(/[^A-Za-z0-9@._+\- ]/g, "");
       const filter = String(body.filter || "all");
       let cond = "";
-      if (filter === "pool") cond = "&sold=eq.false&status=eq.active";
+      if (filter === "pool") cond = `&${POOL_FILTER}`;
       else if (filter === "sold") cond = "&sold=eq.true";
-      else if (filter === "monthly") cond = "&plan=eq.monthly&sold=eq.true";
-      else if (filter === "lifetime") cond = "&plan=eq.lifetime&sold=eq.true";
+      else if (filter === "monthly") cond = "&plan=in.(monthly,ai_monthly)&sold=eq.true";
+      else if (filter === "lifetime") cond = "&plan=in.(lifetime,ai_lifetime)&sold=eq.true";
       else if (filter === "revoked") cond = "&status=eq.revoked";
       const search = q
         ? `&or=(email.ilike.*${encodeURIComponent(q)}*,key.ilike.*${encodeURIComponent(q)}*,payment_ref.ilike.*${encodeURIComponent(q)}*)`
         : "";
       const pageSize = 50;
       const page = Math.max(parseInt(body.page, 10) || 0, 0);
+      if (filter === "double") {
+        const list = await rpcCall("double_sold_keys", {});
+        // setof text comes back as plain strings; accept {double_sold_keys: k} too.
+        const keys = (Array.isArray(list) ? list : [])
+          .map((x) => (x && typeof x === "object" ? x.double_sold_keys : x))
+          .filter((k) => /^[A-Za-z0-9-]{1,64}$/.test(String(k || "")))
+          .slice(0, 200);
+        if (!keys.length) {
+          res.status(200).json({ ok: true, rows: [], total: 0, page, pageSize });
+          return;
+        }
+        cond = `&key=in.(${keys.join(",")})`;
+      }
       const { body: rows, headers } = await pg(
         `/licenses?select=key,status,sold,email,payment_ref,device_id,plan,expires_at,ai_enabled,activated_at,created_at${cond}${search}&order=created_at.desc&limit=${pageSize}&offset=${page * pageSize}`,
         { headers: { Prefer: "count=exact" } },
@@ -246,10 +322,11 @@ module.exports = async (req, res) => {
 
     if (action === "unbind") {
       if (!key) throw oops("key required");
+      // A key that had a device was handed to someone, so it stays sold.
       const { body: rows } = await pg(`/licenses?key=eq.${encodeURIComponent(key)}`, {
         method: "PATCH",
         headers: { Prefer: "return=representation" },
-        body: JSON.stringify({ device_id: null }),
+        body: JSON.stringify({ device_id: null, sold: true }),
       });
       if (!rows || !rows.length) throw oops("key not found");
       res.status(200).json({ ok: true, row: rows[0] });
@@ -286,7 +363,7 @@ module.exports = async (req, res) => {
       if (!row) throw oops("key not found");
       if (!row.email) throw oops("no buyer email stored on this key");
       const dl = process.env.DOWNLOAD_URL || "https://www.humantyper.online/#download";
-      const monthly = row.plan === "monthly";
+      const monthly = MONTHLY_PLANS.includes(row.plan);
       await sendEmail(
         row.email,
         monthly ? "Your Human Typer monthly pass" : "Your Human Typer license key",
@@ -317,6 +394,46 @@ module.exports = async (req, res) => {
       return;
     }
 
+    if (action === "reserve") {
+      if (!key) throw oops("key required");
+      // Only matches while the key is still in the pool, so a key checkout
+      // already sold (or one someone activated) is never touched.
+      const { body: rows } = await pg(`/licenses?key=eq.${encodeURIComponent(key)}&${POOL_FILTER}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ sold: true, payment_ref: manualRef() }),
+      });
+      if (!rows || !rows.length) throw oops("that key is not in the sale pool");
+      res.status(200).json({ ok: true, row: rows[0] });
+      return;
+    }
+
+    if (action === "replace") {
+      if (!key) throw oops("key required");
+      const out = await rpcCall("replace_key", { p_key: key, p_new: mintKey() });
+      if (!out || !out.ok) {
+        throw oops(out && out.reason === "no_buyer" ? "this key has no buyer to move" : "key not found");
+      }
+      let emailed = false;
+      let email_error;
+      if (!process.env.RESEND_API_KEY) {
+        email_error = "RESEND_API_KEY missing; copy the key and send it yourself";
+      } else {
+        try {
+          await emailKeys(out.email, [out.key], out.plan, out.expires_at);
+          emailed = true;
+        } catch (err) {
+          console.error("admin replace: email failed:", err);
+          email_error = sendFailText(err);
+        }
+      }
+      res.status(200).json({
+        ok: true, key: out.key, email: out.email, plan: out.plan, expires_at: out.expires_at,
+        old_restored: out.old_restored, emailed, ...(email_error ? { email_error } : {}),
+      });
+      return;
+    }
+
     if (action === "addkeys") {
       const tokens = String(body.keys || "")
         .split(/[\s,]+/)
@@ -335,6 +452,65 @@ module.exports = async (req, res) => {
         invalid: tokens.length - keys.length,
         inserted: (rows || []).length,
         duplicates: keys.length - (rows || []).length,
+      });
+      return;
+    }
+
+    if (action === "generate") {
+      const n = Math.min(Math.max(parseInt(body.count, 10) || 1, 1), 500);
+      const dest = String(body.dest || "");
+      if (dest !== "pool" && dest !== "issue") throw oops("pick where the keys go");
+      const fresh = new Set();
+      while (fresh.size < n) fresh.add(mintKey());
+      const insert = (rows) => pg(`/licenses`, {
+        method: "POST",
+        headers: { Prefer: "resolution=ignore-duplicates,return=representation" },
+        body: JSON.stringify(rows),
+      });
+
+      if (dest === "pool") {
+        // The keys stay out of the response: checkout hands pool keys out by
+        // itself, and copying one to give away is how a key gets sold twice.
+        const { body: rows } = await insert([...fresh].map((k) => ({ key: k })));
+        res.status(200).json({ ok: true, dest: "pool", inserted: (rows || []).length });
+        return;
+      }
+
+      const plan = String(body.plan || "");
+      if (!ISSUE_PLANS.includes(plan)) throw oops("pick a plan");
+      const monthly = MONTHLY_PLANS.includes(plan);
+      const days = Math.min(Math.max(parseInt(body.days, 10) || 30, 1), 365);
+      const expires_at = monthly ? new Date(Date.now() + days * 86400000).toISOString() : null;
+      const email = String(body.email || "").trim();
+      if (email && !EMAIL_RE.test(email)) throw oops("that email does not look right");
+      const label = String(body.label || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 24);
+      const send = body.send === true;
+      if (send && !email) throw oops("enter the buyer's email to send the key");
+      if (send && !process.env.RESEND_API_KEY) throw oops("RESEND_API_KEY missing");
+      if (send && monthly && n > 10) throw oops("email at most 10 monthly keys at once");
+
+      const payment_ref = manualRef(label);
+      const { body: rows } = await insert([...fresh].map((k) => ({
+        key: k, sold: true, plan, email: email || null, payment_ref, expires_at,
+      })));
+      const keys = (rows || []).map((r) => r.key);
+      if (!keys.length) throw oops("no keys were created; try again");
+
+      let emailed = false;
+      let email_error;
+      if (send) {
+        try {
+          await emailKeys(email, keys, plan, expires_at);
+          emailed = true;
+        } catch (err) {
+          // The keys exist already; hand them back so they are not lost.
+          console.error("admin generate: email failed:", err);
+          email_error = sendFailText(err);
+        }
+      }
+      res.status(200).json({
+        ok: true, dest: "issue", keys, plan, expires_at, email: email || null,
+        payment_ref, emailed, ...(email_error ? { email_error } : {}),
       });
       return;
     }
