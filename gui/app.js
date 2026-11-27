@@ -200,11 +200,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function reasonMessage(reason) {
         switch (reason) {
-            case 'in_use':  return 'This key is already activated on another device.';
+            case 'in_use':  return 'This key is already active on another device. One key works on one device. To move it to this one, email me@rufaiahmed.com with your key.';
             case 'revoked': return 'This key has been disabled. Contact me@rufaiahmed.com.';
-            case 'offline': return 'Could not reach the activation server. Check your internet and try again.';
+            case 'expired': return 'This pass has ended. Renew at humantyper.online with the same email and this key works again.';
+            case 'offline': return 'Could not reach the activation server. Check your internet and try again in a minute.';
             case 'missing': return 'Please enter your license key.';
-            default:        return 'That license key is not valid.';
+            case 'invalid': return 'That license key is not valid. Copy it from your purchase email and paste it here.';
+            default:        return 'Activation did not go through. Please try again in a minute.';
         }
     }
 

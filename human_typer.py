@@ -1384,7 +1384,8 @@ def _post_activate(key: str, timeout: float = 12.0):
     """Ask the server to activate/re-check a key for this device.
 
     Returns {"ok": True} / {"ok": False, "reason": "..."}, or None if the server
-    is unreachable (offline).
+    is unreachable (offline) or answers with anything but a verdict. Server
+    trouble must read as "could not reach the server", never as an invalid key.
     """
     global _last_net_error
     payload = json.dumps({"key": key, "device_id": _machine_id()}).encode("utf-8")
@@ -1394,12 +1395,20 @@ def _post_activate(key: str, timeout: float = 12.0):
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            body = json.loads(resp.read().decode("utf-8"))
+        if not isinstance(body, dict):
+            _last_net_error = "bad server response"
+            return None
+        return body
     except urllib.error.HTTPError as e:
         try:
-            return json.loads(e.read().decode("utf-8"))
+            body = json.loads(e.read().decode("utf-8"))
         except Exception:
-            return {"ok": False, "reason": "invalid"}
+            body = None
+        if e.code < 500 and isinstance(body, dict) and body.get("reason"):
+            return body
+        _last_net_error = f"HTTP {e.code}"
+        return None
     except Exception as e:
         _last_net_error = str(e) or e.__class__.__name__
         return None  # offline / network error
@@ -1605,7 +1614,8 @@ def revalidate_online() -> None:
     is still enforced locally from the stored expiry). On an OK re-check we copy any
     new expires_at down, so RENEWING a monthly pass restores access on the next launch
     with no re-entry. An 'expired' result keeps the key (paying again auto-recovers);
-    revoked / invalid / in_use means the key is dead or moved, so it is dropped.
+    only revoked / invalid / in_use (the key is dead or moved) drops it. Any other
+    answer leaves the saved activation alone.
     """
     data = _local_activation()
     if not data or not data.get("key"):
@@ -1637,7 +1647,8 @@ def revalidate_online() -> None:
                 data["plan"] = res.get("plan")
             _write_activation(data)
         return
-    _clear_activation()
+    if res.get("reason") in ("revoked", "invalid", "in_use"):
+        _clear_activation()
 
 
 def activate(key: str) -> dict:
