@@ -24,17 +24,19 @@ async function rpc(fn, args, opts = {}) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// 3 attempts in all, so a brief Supabase hiccup does not reach the app. Each
-// attempt gives up after 2.5s: 3 x 2.5s plus the waits is about 8.35s, inside
-// the platform's 10s limit (a 504 from that limit reads as an invalid key in
-// released app builds).
+// Up to 3 attempts inside one 8s budget, so a brief Supabase hiccup does not
+// reach the app and the answer always beats the platform's 10s limit (a 504
+// from that limit reads as an invalid key in released app builds). A slow but
+// working database gets up to 4s per attempt.
 async function activateWithRetry(args) {
+    const deadline = Date.now() + 8000;
     const waits = [250, 600];
     for (let i = 0; ; i++) {
+        const left = deadline - Date.now();
         try {
-            return await rpc("activate_key", args, { signal: AbortSignal.timeout(2500) });
+            return await rpc("activate_key", args, { signal: AbortSignal.timeout(Math.min(4000, left)) });
         } catch (err) {
-            if (i >= waits.length) throw err;
+            if (i >= waits.length || deadline - Date.now() < waits[i] + 1000) throw err;
             await sleep(waits[i]);
         }
     }
