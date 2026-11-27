@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Generate Human Typer license keys.
 
-Writes LICENSE_KEYS.txt — the plaintext keys (PRIVATE; gitignored). Store them in
-your Google Doc and load them into Supabase with `node landing/seed_supabase.mjs`.
-Validation is online (Supabase), so nothing is embedded in the app.
+Writes LICENSE_KEYS.txt, the plaintext keys (PRIVATE; gitignored). Load them into
+Supabase with `node landing/seed_supabase.mjs` and they become the sale pool:
+checkout emails pool keys to buyers by itself, so never hand one of these out. To
+give someone a key (bank transfer, replacement, gift), use the admin page:
+Generate keys, give to a buyer. Validation is online (Supabase), so nothing is
+embedded in the app.
 
 Usage:
   python gen_licenses.py [count]        # default 50 (REPLACES the file)
@@ -43,7 +46,9 @@ def _extract(line):
 def write(keys):
     with open(KEYS_FILE, "w", encoding="utf-8") as fh:
         fh.write("# Human Typer license keys — PRIVATE. Do not commit or publish.\n")
-        fh.write(f"# Hand one key to each buyer. Total: {len(keys)}\n\n")
+        fh.write("# Sale pool once seeded: checkout emails these by itself, so never hand one out.\n")
+        fh.write("# To give someone a key use the admin page (Generate keys, give to a buyer).\n")
+        fh.write(f"# Total: {len(keys)}\n\n")
         for i, k in enumerate(keys, 1):
             fh.write(f"{i:>3}. {k}\n")
 

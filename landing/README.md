@@ -18,9 +18,14 @@ landing/
 ## One-time setup
 
 **1. Supabase**
-- SQL editor → run `supabase_schema.sql`. It is safe to re-run: it `create or
-  replace`s every function (including the new `claim_keys` used by team/volume
-  packs) and re-applies the `revoke`s, without touching existing rows.
+- SQL editor: run `supabase_schema.sql`, then `supabase_ai_migration.sql`, then
+  `supabase_keys_migration.sql` (keeps every key that was ever activated out of
+  the sale pool). Its last result lists monthly sales where the key was already
+  activated before the payment; lifetime sales cannot be detected from the data.
+  Fix each row on the admin page: "double-sold" filter, press "new key". The
+  two migrations are safe to re-run. On a database that is already live, run only
+  the migration files: re-running `supabase_schema.sql` brings back the old 3-arg
+  claim functions next to the new ones.
 - Project Settings → API → copy the **service_role** key (SECRET) and the Project URL.
 
 **2. Load keys**
@@ -30,6 +35,13 @@ SUPABASE_URL=https://<proj>.supabase.co \
 SUPABASE_SERVICE_ROLE_KEY=<service_role> \
 node landing/seed_supabase.mjs      # idempotent; re-run after gen_licenses.py --add N
 ```
+Seeded keys are the sale pool: checkout emails them by itself and `/api/claim`
+tops it up (`KEY_POOL_MIN`, `KEY_POOL_BATCH`), so never hand a pool key out as is. To
+give someone a key use **Generate keys** on `/admin.html`: "add to the sale pool"
+mints pool keys, "give to a buyer" mints sold keys for a bank-transfer buyer, a
+replacement or a gift (pick the plan, optionally email them) that never enter the pool.
+To send an existing pool key instead, press **give out** on its row first: that
+takes it out of the pool so checkout can never sell it too.
 
 **3. Resend (email)** — verify the sender domain `updates.rufaiahmed.com` in Resend
 (add the DNS records it gives you) and have your `re_…` API key ready.
@@ -125,10 +137,9 @@ ref (returns the same set on the callback + webhook double-fire), and emails all
 them in one message ("each key activates 1 device, share one per teammate"). If the
 key pool is short, it sends what is available and emails `ADMIN_EMAIL` to top up.
 
-**Migration:** re-run `supabase_schema.sql` in the Supabase SQL editor (or just the
-`claim_keys` function + its `revoke all on function public.claim_keys(text, text, int)
-from public, anon, authenticated;`). The existing `claim_key` is left in place. No
-app/Vercel env changes are required.
+**Migration:** on a live database run `supabase_ai_migration.sql` and then
+`supabase_keys_migration.sql`, which hold the current `claim_keys`. Do not re-run
+`supabase_schema.sql` there. No app/Vercel env changes are required.
 - **Activate:** the app posts the key + a device fingerprint to `/api/activate`,
   which binds the key to that one device. A second device gets `in_use`.
 - **Revoke / move device** (Supabase SQL editor):
